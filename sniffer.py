@@ -14,7 +14,6 @@ from datetime import datetime
 from domain_resolver import improve_url_identification
 import gzip
 
-
 class NetworkSniffer:
     def __init__(self):
         self.interfaces = self.get_interfaces()
@@ -28,35 +27,6 @@ class NetworkSniffer:
         self.gateway_ip = None
         self._test_scapy_imports()
         self.enable_ip_forwarding()
-
-    def start_session_browser(self):
-        """Uruchamia przeglądarkę sesji"""
-        print("\n==== Menu przeglądarki sesji ====")
-        print("1. Uruchom podstawową przeglądarkę sesji")
-        print("2. Uruchom ulepszoną przeglądarkę z nawigacją")
-
-        try:
-            choice = input("\nWybierz opcję (1/2): ").strip()
-
-            if choice == "1":
-                # Uruchom oryginalną implementację przeglądarki sesji
-                self._start_basic_session_browser()
-            elif choice == "2":
-                # Uruchom ulepszoną przeglądarkę
-                self.start_enhanced_session_browser()
-            else:
-                print("Nieprawidłowy wybór. Wracam do menu głównego.")
-                return False
-
-            return True
-        except KeyboardInterrupt:
-            print("\nPrzerwano uruchamianie przeglądarki sesji.")
-            return False
-        except Exception as e:
-            print(f"Błąd podczas uruchamiania przeglądarki sesji: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
 
     def get_full_html_content(self, url):
         """
@@ -753,55 +723,25 @@ class NetworkSniffer:
 
             return False
 
-    def _start_basic_session_browser(self):
-        """Uruchamia przeglądarkę sesji"""
-        print("Uruchamianie przeglądarki sesji na porcie 8000...")
+    def start_session_browser(self):
+        """Uruchamia interaktywną przeglądarkę sesji"""
+        print("Uruchamianie interaktywnej przeglądarki sesji na porcie 8000...")
 
         if not self.captured_data or len(self.captured_data) == 0:
             print("Błąd: Brak danych do wyświetlenia.")
             return False
 
         try:
-            # Zapisz dane do pliku tymczasowego dla przeglądarki
-            with open('temp_session_data.json', 'w', encoding='utf-8') as f:
-                # Konwertuj dane do formatu JSON
-                json_data = {}
-                for url, requests in self.captured_data.items():
-                    json_data[url] = []
-                    for req in requests:
-                        # Przygotuj kopię danych żądania, aby zmodyfikować
-                        req_copy = dict(req)
+            # Utwórz pliki dla aplikacji przeglądarki sesji
+            if not self.create_session_browser_app():
+                print("Nie udało się utworzyć aplikacji przeglądarki sesji.")
+                return False
 
-                        # Konwertuj timestamp na string jeśli jest obiektem datetime
-                        if isinstance(req_copy.get('timestamp'), datetime):
-                            req_copy['timestamp'] = req_copy['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
-
-                        # Upewnij się, że wszystkie wartości są serializowalne
-                        for key, value in list(req_copy.items()):
-                            if isinstance(value, (dict, list)):
-                                try:
-                                    # Sprawdź czy struktura jest serializowalna
-                                    json.dumps(value)
-                                except:
-                                    # Jeśli nie, przekonwertuj na string
-                                    req_copy[key] = str(value)
-
-                        json_data[url].append(req_copy)
-
-                json.dump(json_data, f, indent=2, default=str)
-
-            # Utwórz prosty serwer HTTP
-            class SessionHandler(http.server.SimpleHTTPRequestHandler):
+            # Utwórz klasę obsługującą żądania HTTP
+            class SessionBrowserHandler(http.server.SimpleHTTPRequestHandler):
                 def do_GET(self):
-                    # Obsługa favicon.ico
-                    if self.path == '/favicon.ico':
-                        # Zwróć pustą ikonę lub zignoruj żądanie
-                        self.send_response(204)  # No Content
-                        self.end_headers()
-                        return None
-
                     if self.path == '/':
-                        self.path = '/session_browser.html'
+                        self.path = '/session_browser_app.html'
                     elif self.path == '/data':
                         self.send_response(200)
                         self.send_header('Content-type', 'application/json')
@@ -809,340 +749,34 @@ class NetworkSniffer:
                         with open('temp_session_data.json', 'rb') as f:
                             self.wfile.write(f.read())
                         return
+                    elif self.path.startswith('/proxy/'):
+                        # Obsługa proxy dla odtwarzania żądań
+                        try:
+                            # Dekoduj URL, do którego ma być wysłane żądanie
+                            encoded_url = self.path[7:]  # usuń '/proxy/'
+                            target_url = urllib.parse.unquote(encoded_url)
+
+                            # Tu możesz dodać kod do odtwarzania żądań
+                            self.send_response(200)
+                            self.send_header('Content-type', 'text/html')
+                            self.end_headers()
+                            self.wfile.write(f"Próba odtworzenia żądania do {target_url}".encode())
+                        except Exception as e:
+                            self.send_response(500)
+                            self.send_header('Content-type', 'text/plain')
+                            self.end_headers()
+                            self.wfile.write(f"Błąd: {str(e)}".encode())
+                        return
 
                     return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
-            # Utwórz plik HTML dla przeglądarki sesji
-            with open('session_browser.html', 'w', encoding='utf-8') as f:
-                f.write('''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Przeglądarka sesji</title>
-        <style>
-            body { 
-                font-family: Arial, sans-serif; 
-                margin: 0; 
-                padding: 20px; 
-                background-color: #f4f4f4;
-            }
-            .container {
-                display: flex;
-                max-width: 1600px;
-                margin: 0 auto;
-                gap: 20px;
-            }
-            .url-list {
-                width: 300px;
-                background-color: white;
-                border-radius: 5px;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-                max-height: 800px;
-                overflow-y: auto;
-                padding: 10px;
-            }
-            .url-item {
-                padding: 10px;
-                border-bottom: 1px solid #eee;
-                cursor: pointer;
-                transition: background-color 0.3s;
-            }
-            .url-item:hover, .url-item.selected {
-                background-color: #f0f0f0;
-            }
-            .details-panel {
-                flex-grow: 1;
-                background-color: white;
-                border-radius: 5px;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-                padding: 20px;
-                max-height: 800px;
-                overflow-y: auto;
-            }
-            .request-details {
-                margin-bottom: 20px;
-                border: 1px solid #ddd;
-                padding: 15px;
-                border-radius: 5px;
-            }
-            .method-badge {
-                display: inline-block;
-                padding: 5px 10px;
-                border-radius: 3px;
-                font-weight: bold;
-                margin-right: 10px;
-            }
-            .method-GET { background-color: #4CAF50; color: white; }
-            .method-POST { background-color: #2196F3; color: white; }
-            .method-OTHER { background-color: #FF9800; color: white; }
-            pre {
-                background-color: #f4f4f4;
-                padding: 10px;
-                border-radius: 5px;
-                max-height: 500px;
-                overflow-y: auto;
-                white-space: pre-wrap;
-                word-wrap: break-word;
-            }
-            .content-buttons {
-                margin-bottom: 10px;
-                display: flex;
-                gap: 10px;
-            }
-            .content-buttons button {
-                padding: 5px 10px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                cursor: pointer;
-            }
-            .content-buttons button:nth-child(2) {
-                background-color: #2196F3;
-            }
-            .content-buttons button:nth-child(3) {
-                background-color: #FF5722;
-            }
-            .content-container {
-                position: relative;
-            }
-            .content-container iframe {
-                width: 100%;
-                height: 600px;
-                border: 1px solid #ddd;
-            }
-            .full-page-btn {
-                margin-top: 10px;
-                padding: 10px;
-                background-color: #FF5722;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                cursor: pointer;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="url-list" id="urlList"></div>
-            <div class="details-panel" id="detailsPanel">
-                <h2>Wybierz połączenie, aby zobaczyć szczegóły</h2>
-            </div>
-        </div>
-
-        <script>
-            fetch('/data')
-                .then(response => response.json())
-                .then(sessionData => {
-                    const urlList = document.getElementById('urlList');
-                    const detailsPanel = document.getElementById('detailsPanel');
-
-                    // Generowanie listy URL
-                    Object.keys(sessionData).forEach(url => {
-                        const urlItem = document.createElement('div');
-                        urlItem.className = 'url-item';
-                        urlItem.textContent = url;
-                        urlItem.onclick = () => {
-                            // Zaznacz aktywny URL
-                            document.querySelectorAll('.url-item').forEach(el => 
-                                el.classList.remove('selected')
-                            );
-                            urlItem.classList.add('selected');
-
-                            // Wyświetl szczegóły
-                            renderUrlDetails(url, sessionData[url]);
-                        };
-                        urlList.appendChild(urlItem);
-                    });
-
-                    function renderUrlDetails(url, requests) {
-                        detailsPanel.innerHTML = `<h2>${url}</h2>`;
-
-                        // Dodaj przycisk pełnej strony
-                        const fullPageAllBtn = document.createElement('button');
-                        fullPageAllBtn.textContent = 'Pełna strona (wszystkie dane)';
-                        fullPageAllBtn.className = 'full-page-btn';
-                        fullPageAllBtn.onclick = () => {
-                            const fullPageIframe = document.createElement('iframe');
-                            fullPageIframe.style.width = '100%';
-                            fullPageIframe.style.height = '800px';
-                            fullPageIframe.style.border = '1px solid #ddd';
-
-                            // Zbierz wszystkie treści HTML
-                            let fullContent = requests.reduce((acc, req) => {
-                                const htmlResponses = req.responses.filter(resp => 
-                                    resp.content && 
-                                    (resp.content.includes('<!DOCTYPE html>') || 
-                                     resp.content.includes('<html'))
-                                );
-                                return acc + (htmlResponses[0]?.content || '');
-                            }, '');
-
-                            fullPageIframe.srcdoc = fullContent || '<html><body>Brak treści</body></html>';
-
-                            const fullPageContainer = document.createElement('div');
-                            fullPageContainer.style.marginTop = '15px';
-                            fullPageContainer.appendChild(fullPageIframe);
-
-                            detailsPanel.appendChild(fullPageContainer);
-                        };
-
-                        detailsPanel.appendChild(fullPageAllBtn);
-
-                        requests.forEach((request, index) => {
-                            const requestBlock = document.createElement('div');
-                            requestBlock.className = 'request-details';
-
-                            // Badge metody
-                            const methodBadge = document.createElement('span');
-                            methodBadge.className = `method-badge method-${request.method || 'OTHER'}`;
-                            methodBadge.textContent = request.method || 'UNKNOWN';
-                            requestBlock.appendChild(methodBadge);
-
-                            // Nagłówek
-                            const headerInfo = document.createElement('div');
-                            headerInfo.innerHTML = `
-                                <p><strong>Timestamp:</strong> ${request.timestamp}</p>
-                                <p><strong>Źródło:</strong> ${request.src_ip} → <strong>Cel:</strong> ${request.dst_ip}</p>
-                            `;
-                            requestBlock.appendChild(headerInfo);
-
-                            // Nagłówki żądania
-                            if (request.headers && Object.keys(request.headers).length > 0) {
-                                const headersTitle = document.createElement('div');
-                                headersTitle.textContent = 'Nagłówki żądania';
-                                headersTitle.style.fontWeight = 'bold';
-                                headersTitle.style.marginTop = '10px';
-                                requestBlock.appendChild(headersTitle);
-
-                                const headersPre = document.createElement('pre');
-                                headersPre.textContent = JSON.stringify(request.headers, null, 2);
-                                requestBlock.appendChild(headersPre);
-                            }
-
-                            // Dane POST
-                            if (request.post_data) {
-                                const postTitle = document.createElement('div');
-                                postTitle.textContent = 'Dane POST';
-                                postTitle.style.fontWeight = 'bold';
-                                postTitle.style.marginTop = '10px';
-                                requestBlock.appendChild(postTitle);
-
-                                const postPre = document.createElement('pre');
-                                postPre.textContent = request.post_data;
-                                requestBlock.appendChild(postPre);
-                            }
-
-                            // Odpowiedzi
-                            if (request.responses && request.responses.length > 0) {
-                                request.responses.forEach((response, respIndex) => {
-                                    const responsesTitle = document.createElement('div');
-                                    responsesTitle.textContent = `Odpowiedź #${respIndex + 1}`;
-                                    responsesTitle.style.fontWeight = 'bold';
-                                    responsesTitle.style.marginTop = '10px';
-                                    requestBlock.appendChild(responsesTitle);
-
-                                    // Nagłówki odpowiedzi
-                                    if (response.headers && Object.keys(response.headers).length > 0) {
-                                        const responseHeadersTitle = document.createElement('div');
-                                        responseHeadersTitle.textContent = 'Nagłówki odpowiedzi';
-                                        responseHeadersTitle.style.fontWeight = 'bold';
-                                        requestBlock.appendChild(responseHeadersTitle);
-
-                                        const responseHeadersPre = document.createElement('pre');
-                                        responseHeadersPre.textContent = JSON.stringify(response.headers, null, 2);
-                                        requestBlock.appendChild(responseHeadersPre);
-                                    }
-
-                                    // Treść odpowiedzi
-                                    if (response.content) {
-                                        const contentTitle = document.createElement('div');
-                                        contentTitle.textContent = 'Treść odpowiedzi';
-                                        contentTitle.style.fontWeight = 'bold';
-                                        requestBlock.appendChild(contentTitle);
-
-                                        // Kontener z przyciskami
-                                        const buttonsDiv = document.createElement('div');
-                                        buttonsDiv.className = 'content-buttons';
-
-                                        // Przycisk Kod
-                                        const codeBtn = document.createElement('button');
-                                        codeBtn.textContent = 'Kod';
-
-                                        // Przycisk Podgląd
-                                        const previewBtn = document.createElement('button');
-                                        previewBtn.textContent = 'Podgląd';
-
-                                        // Przycisk Pełna strona
-                                        const fullPageBtn = document.createElement('button');
-                                        fullPageBtn.textContent = 'Pełna strona';
-
-                                        // Kontener na treść
-                                        const contentDiv = document.createElement('div');
-                                        contentDiv.className = 'content-container';
-
-                                        // Domyślnie pokaż kod
-                                        const contentPre = document.createElement('pre');
-                                        contentPre.textContent = response.content;
-                                        contentDiv.appendChild(contentPre);
-
-                                        // Obsługa przycisku Kod
-                                        codeBtn.onclick = () => {
-                                            contentDiv.innerHTML = '';
-                                            contentDiv.appendChild(contentPre);
-                                        };
-
-                                        // Obsługa przycisku Podgląd
-                                        previewBtn.onclick = () => {
-                                            contentDiv.innerHTML = '';
-                                            const iframe = document.createElement('iframe');
-                                            iframe.srcdoc = response.content;
-                                            iframe.style.width = '100%';
-                                            iframe.style.height = '600px';
-                                            contentDiv.appendChild(iframe);
-                                        };
-
-                                        // Obsługa przycisku Pełna strona
-                                        fullPageBtn.onclick = () => {
-                                            contentDiv.innerHTML = '';
-                                            const iframe = document.createElement('iframe');
-                                            iframe.srcdoc = response.content;
-                                            iframe.style.width = '100%';
-                                            iframe.style.height = '800px';
-                                            contentDiv.appendChild(iframe);
-                                        };
-
-                                        // Dodaj przyciski
-                                        buttonsDiv.appendChild(codeBtn);
-                                        buttonsDiv.appendChild(previewBtn);
-                                        buttonsDiv.appendChild(fullPageBtn);
-                                        requestBlock.appendChild(buttonsDiv);
-                                        requestBlock.appendChild(contentDiv);
-                                    }
-                                });
-                            }
-
-                            detailsPanel.appendChild(requestBlock);
-                        });
-                    }
-                })
-                .catch(error => {
-                    console.error('Błąd podczas ładowania danych:', error);
-                    document.getElementById('detailsPanel').innerHTML = 
-                        `<p>Nie udało się załadować danych: ${error.message}</p>`;
-                });
-        </script>
-    </body>
-    </html>
-                ''')
-
             # Uruchom serwer HTTP
-            handler = SessionHandler
+            handler = SessionBrowserHandler
             with socketserver.TCPServer(("", 8000), handler) as httpd:
                 print("Serwer uruchomiony na http://localhost:8000")
                 print("Otwórz przeglądarkę i przejdź do adresu: http://localhost:8000")
                 print("Naciśnij Ctrl+C, aby zatrzymać serwer")
+
                 try:
                     # Otwórz przeglądarkę
                     try:
@@ -1163,15 +797,14 @@ class NetworkSniffer:
                     except:
                         pass
                     # Usuń pliki tymczasowe
-                    for temp_file in ['temp_session_data.json', 'session_browser.html']:
+                    for temp_file in ['temp_session_data.json', 'session_browser_app.html']:
                         try:
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
                         except Exception as e:
                             print(f"Nie udało się usunąć pliku {temp_file}: {e}")
                     print("Serwer zatrzymany.")
-
-            return True
+                    return True
 
         except Exception as e:
             print(f"Błąd podczas uruchamiania przeglądarki sesji: {e}")
@@ -1179,631 +812,6 @@ class NetworkSniffer:
             traceback.print_exc()
             return False
 
-    def start_enhanced_session_browser(self):
-        """Uruchamia udoskonaloną przeglądarkę sesji na porcie 8000 z możliwością nawigacji jak na oryginalnym urządzeniu"""
-        print("Uruchamianie ulepszonej przeglądarki sesji na porcie 8000...")
-
-        if not self.captured_data or len(self.captured_data) == 0:
-            print("Błąd: Brak danych do wyświetlenia.")
-            return False
-
-        try:
-            # Zapisz dane do pliku tymczasowego dla przeglądarki
-            with open('temp_session_data.json', 'w', encoding='utf-8') as f:
-                # Konwertuj dane do formatu JSON z dodatkowymi metadanymi
-                json_data = {}
-
-                # Analizuj dane, aby odtworzyć historię przeglądania i powiązania między żądaniami
-                browsing_sessions = self._analyze_browsing_sessions()
-
-                # Zapisz zrekonstruowane sesje i oryginalne dane
-                json_data = {
-                    "raw_data": {},
-                    "browsing_sessions": browsing_sessions
-                }
-
-                # Zapisz oryginalne dane
-                for url, requests in self.captured_data.items():
-                    json_data["raw_data"][url] = []
-                    for req in requests:
-                        # Przygotuj kopię danych żądania
-                        req_copy = dict(req)
-
-                        # Konwertuj timestamp na string jeśli jest obiektem datetime
-                        if isinstance(req_copy.get('timestamp'), datetime):
-                            req_copy['timestamp'] = req_copy['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
-
-                        # Upewnij się, że wszystkie wartości są serializowalne
-                        for key, value in list(req_copy.items()):
-                            if isinstance(value, (dict, list)):
-                                try:
-                                    # Sprawdź czy struktura jest serializowalna
-                                    json.dumps(value)
-                                except:
-                                    # Jeśli nie, przekonwertuj na string
-                                    req_copy[key] = str(value)
-
-                        json_data["raw_data"][url].append(req_copy)
-
-                json.dump(json_data, f, indent=2, default=str)
-
-            # Utwórz prosty serwer HTTP z funkcjonalnością proxy
-            class EnhancedSessionHandler(http.server.SimpleHTTPRequestHandler):
-                # Przechowywanie aktywnej sesji i ciasteczek
-                active_session = {
-                    "cookies": {},
-                    "current_url": None,
-                    "history": []
-                }
-
-                def do_GET(self):
-                    # Obsługa różnych ścieżek API i stron
-                    if self.path == '/':
-                        self.path = '/session_browser.html'
-                        return http.server.SimpleHTTPRequestHandler.do_GET(self)
-                    elif self.path == '/data':
-                        # Zwróć pełne dane sesji
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        with open('temp_session_data.json', 'rb') as f:
-                            self.wfile.write(f.read())
-                        return
-                    elif self.path.startswith('/proxy/'):
-                        # Symulacja proxy dla przechwyconych żądań
-                        try:
-                            # Wyodrębnij URL z ścieżki proxy
-                            encoded_url = self.path[7:]  # usunięcie "/proxy/"
-                            target_url = self._decode_proxy_url(encoded_url)
-
-                            # Wczytaj dane
-                            with open('temp_session_data.json', 'r', encoding='utf-8') as f:
-                                session_data = json.load(f)
-
-                            # Znajdź odpowiednie żądanie i odpowiedź
-                            response_content = self._find_response_for_url(session_data, target_url)
-
-                            if response_content:
-                                # Aktualizuj aktywną sesję
-                                self.active_session["current_url"] = target_url
-                                if target_url not in self.active_session["history"]:
-                                    self.active_session["history"].append(target_url)
-
-                                # Zwróć odpowiedź
-                                self.send_response(200)
-                                self.send_header('Content-type', 'text/html')
-                                self.end_headers()
-                                self.wfile.write(response_content.encode('utf-8', errors='ignore'))
-                            else:
-                                # Nie znaleziono odpowiedzi
-                                self.send_response(404)
-                                self.send_header('Content-type', 'text/html')
-                                self.end_headers()
-                                self.wfile.write(
-                                    b"<html><body><h1>Nie znaleziono odpowiedzi dla tego URL</h1><p>Brak danych odpowiedzi dla: " +
-                                    target_url.encode('utf-8') + b"</p></body></html>")
-                        except Exception as e:
-                            # Obsługa błędów
-                            self.send_response(500)
-                            self.send_header('Content-type', 'text/html')
-                            self.end_headers()
-                            self.wfile.write(
-                                f"<html><body><h1>Błąd podczas przetwarzania żądania</h1><p>{str(e)}</p></body></html>".encode(
-                                    'utf-8'))
-                        return
-                    elif self.path == '/api/session_state':
-                        # Zwróć stan aktywnej sesji
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps(self.active_session).encode('utf-8'))
-                        return
-                    elif self.path.startswith('/api/'):
-                        # Inne punkty końcowe API
-                        self.handle_api_endpoints()
-                        return
-
-                    # Domyślna obsługa dla statycznych plików
-                    return http.server.SimpleHTTPRequestHandler.do_GET(self)
-
-                def do_POST(self):
-                    # Obsługa żądań POST dla symulacji formularzy
-                    if self.path.startswith('/api/submit/'):
-                        # Odczytaj dane z ciała żądania
-                        content_length = int(self.headers['Content-Length'])
-                        post_data = self.rfile.read(content_length).decode('utf-8')
-
-                        # Przetworz dane formularza
-                        try:
-                            form_data = json.loads(post_data)
-                            target_url = self._decode_proxy_url(self.path[12:])  # usunięcie "/api/submit/"
-
-                            # Znajdź odpowiednie żądanie POST w danych
-                            with open('temp_session_data.json', 'r', encoding='utf-8') as f:
-                                session_data = json.load(f)
-
-                            # Znajdź i zwróć odpowiedź
-                            response_content = self._find_post_response(session_data, target_url, form_data)
-
-                            # Aktualizuj sesję
-                            self.active_session["current_url"] = target_url
-                            if target_url not in self.active_session["history"]:
-                                self.active_session["history"].append(target_url)
-
-                            # Zwróć odpowiedź
-                            self.send_response(200)
-                            self.send_header('Content-type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(json.dumps({
-                                "success": True,
-                                "response": response_content,
-                                "redirect": None  # Tu można dodać przekierowanie
-                            }).encode('utf-8'))
-                        except Exception as e:
-                            # Obsługa błędów
-                            self.send_response(500)
-                            self.send_header('Content-type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(json.dumps({
-                                "success": False,
-                                "error": str(e)
-                            }).encode('utf-8'))
-                        return
-                    elif self.path == '/api/set_cookies':
-                        # Obsłuż ustawienie ciasteczek
-                        content_length = int(self.headers['Content-Length'])
-                        post_data = self.rfile.read(content_length).decode('utf-8')
-
-                        try:
-                            cookie_data = json.loads(post_data)
-                            # Dodaj do aktywnej sesji
-                            self.active_session["cookies"].update(cookie_data)
-
-                            # Odpowiedz
-                            self.send_response(200)
-                            self.send_header('Content-type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(json.dumps({
-                                "success": True,
-                                "cookies": self.active_session["cookies"]
-                            }).encode('utf-8'))
-                        except Exception as e:
-                            self.send_response(500)
-                            self.send_header('Content-type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(json.dumps({
-                                "success": False,
-                                "error": str(e)
-                            }).encode('utf-8'))
-                        return
-
-                    # Domyślna obsługa dla niezdefiniowanych ścieżek POST
-                    self.send_response(404)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    self.wfile.write(b"<html><body><h1>Not Found</h1></body></html>")
-
-                def handle_api_endpoints(self):
-                    """Obsługa dodatkowych punktów końcowych API"""
-                    if self.path == '/api/browsing_sessions':
-                        # Zwróć listę wykrytych sesji przeglądania
-                        with open('temp_session_data.json', 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps(data.get("browsing_sessions", {})).encode('utf-8'))
-                        return
-                    elif self.path == '/api/clear_session':
-                        # Wyczyść aktywną sesję
-                        self.active_session = {
-                            "cookies": {},
-                            "current_url": None,
-                            "history": []
-                        }
-
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"success": True}).encode('utf-8'))
-                        return
-                    else:
-                        # Nieznany punkt końcowy API
-                        self.send_response(404)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"error": "Unknown API endpoint"}).encode('utf-8'))
-
-                def _decode_proxy_url(self, encoded_url):
-                    """Dekoduje URL z formatu używanego w ścieżce proxy"""
-                    # Najpierw zdekoduj URL z formatu URL
-                    import urllib.parse
-                    decoded = urllib.parse.unquote(encoded_url)
-                    return decoded
-
-                def _find_response_for_url(self, session_data, target_url):
-                    """Znajduje odpowiednią odpowiedź dla podanego URL"""
-                    raw_data = session_data.get("raw_data", {})
-
-                    # Próbuj znaleźć dokładne dopasowanie URL
-                    if target_url in raw_data:
-                        requests = raw_data[target_url]
-                        if requests:
-                            # Znajdź odpowiedź GET dla tego URL - symuluj zawartość HTML
-                            for req in requests:
-                                if req.get("method") == "GET" or req.get("method") == "UNKNOWN":
-                                    # Tutaj normalnie byłaby odpowiedź HTTP, ale w przechwyconych danych jej nie mamy
-                                    # Zamiast tego tworzymy symulowaną odpowiedź na podstawie dostępnych danych
-                                    return self._generate_simulated_response(target_url, req)
-
-                    # Jeśli nie znaleziono dokładnego dopasowania, szukaj częściowego
-                    for url, requests in raw_data.items():
-                        if url in target_url or target_url in url:
-                            if requests:
-                                for req in requests:
-                                    if req.get("method") == "GET" or req.get("method") == "UNKNOWN":
-                                        return self._generate_simulated_response(url, req)
-
-                    # Jeśli nic nie znaleziono, sprawdź domeny
-                    target_domain = self._extract_domain(target_url)
-                    for url, requests in raw_data.items():
-                        if self._extract_domain(url) == target_domain:
-                            if requests:
-                                for req in requests:
-                                    if req.get("method") == "GET" or req.get("method") == "UNKNOWN":
-                                        return self._generate_simulated_response(url, req)
-
-                    # Nic nie znaleziono
-                    return None
-
-                def _find_post_response(self, session_data, target_url, form_data):
-                    """Znajduje odpowiednią odpowiedź dla żądania POST z danymi formularza"""
-                    raw_data = session_data.get("raw_data", {})
-
-                    # Spróbuj znaleźć żądanie POST dla tego URL
-                    if target_url in raw_data:
-                        requests = raw_data[target_url]
-                        for req in requests:
-                            if req.get("method") == "POST":
-                                # Tutaj można dodać logikę dopasowania danych formularza
-                                # z oryginalnym żądaniem, ale na potrzeby symulacji
-                                # po prostu zwracamy symulowaną odpowiedź
-                                return self._generate_simulated_response(target_url, req)
-
-                    # Sprawdź domeny dla żądań POST
-                    target_domain = self._extract_domain(target_url)
-                    for url, requests in raw_data.items():
-                        if self._extract_domain(url) == target_domain:
-                            for req in requests:
-                                if req.get("method") == "POST":
-                                    return self._generate_simulated_response(url, req)
-
-                    # Jeśli nie znaleziono żądania POST, zwróć domyślną odpowiedź
-                    return "<html><body><h1>Formularz przesłany</h1><p>Brak odpowiedzi w przechwyconych danych.</p></body></html>"
-
-                def _generate_simulated_response(self, url, request_data):
-                    """Generuje symulowaną odpowiedź HTML na podstawie danych żądania"""
-                    protocol = request_data.get("protocol", "HTTP")
-                    method = request_data.get("method", "UNKNOWN")
-                    headers = request_data.get("headers", {})
-                    cookies = request_data.get("cookies", {})
-                    post_data = request_data.get("post_data", None)
-
-                    # Utwórz podstawową stronę HTML z dostępnymi danymi
-                    html = f"""
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta charset="UTF-8">
-                        <title>{url}</title>
-                        <style>
-                            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                            .url-bar {{ background-color: #f1f1f1; padding: 10px; border-radius: 4px; margin-bottom: 20px; }}
-                            .section {{ margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 4px; }}
-                            .section h3 {{ margin-top: 0; background-color: #f5f5f5; padding: 10px; }}
-                            table {{ width: 100%; border-collapse: collapse; }}
-                            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                            th {{ background-color: #f2f2f2; }}
-                            .nav-button {{ padding: 8px 15px; background-color: #4CAF50; color: white; border: none; 
-                                           border-radius: 4px; cursor: pointer; margin-right: 5px; }}
-                            .nav-button:hover {{ background-color: #45a049; }}
-                            .content-area {{ min-height: 300px; border: 1px solid #ddd; padding: 20px; }}
-                            .controls {{ margin-bottom: 20px; }}
-                        </style>
-                    </head>
-                    <body>
-                        <div class="url-bar">
-                            <strong>URL:</strong> {url}
-                        </div>
-
-                        <div class="controls">
-                            <button class="nav-button" onclick="goBack()">⬅️ Wstecz</button>
-                            <button class="nav-button" onclick="refreshPage()">🔄 Odśwież</button>
-                            <button class="nav-button" onclick="showRequestDetails()">🔍 Szczegóły żądania</button>
-                        </div>
-
-                        <div class="content-area">
-                            <h1>Symulowana odpowiedź dla {url}</h1>
-                            <p>Ta strona symuluje odpowiedź serwera na podstawie przechwyconych danych.</p>
-                            <p><strong>Protokół:</strong> {protocol}</p>
-                            <p><strong>Metoda:</strong> {method}</p>
-                    """
-
-                    # Dodaj linki do innych przechwyconych URL-i z tej samej domeny
-                    html += """
-                            <div class="section">
-                                <h3>Powiązane URL-e (wykryte w tej samej sesji)</h3>
-                                <div id="related-urls">Ładowanie powiązanych URL-i...</div>
-                            </div>
-                    """
-
-                    # Jeśli były formularze w oryginalnej stronie, dodaj symulowany formularz
-                    if method == "POST" or post_data:
-                        html += """
-                            <div class="section">
-                                <h3>Symulowany formularz</h3>
-                                <form id="simulated-form" onsubmit="submitForm(event)">
-                                    <div id="form-fields">
-                                        <!-- Pola formularza zostaną dodane dynamicznie -->
-                                    </div>
-                                    <button type="submit" class="nav-button">Wyślij formularz</button>
-                                </form>
-                            </div>
-                        """
-
-                    # Dodaj sekcję z ciasteczkami
-                    if cookies:
-                        html += """
-                            <div class="section">
-                                <h3>Ciasteczka znalezione w żądaniu</h3>
-                                <table>
-                                    <tr>
-                                        <th>Nazwa</th>
-                                        <th>Wartość</th>
-                                    </tr>
-                        """
-
-                        for name, value in cookies.items():
-                            html += f"""
-                                    <tr>
-                                        <td>{name}</td>
-                                        <td>{value}</td>
-                                    </tr>
-                            """
-
-                        html += """
-                                </table>
-                            </div>
-                        """
-
-                    # Zamknij sekcję zawartości
-                    html += """
-                        </div>
-
-                        <div id="request-details" class="section" style="display: none;">
-                            <h3>Szczegóły oryginalnego żądania</h3>
-                            <div id="details-content"></div>
-                        </div>
-                    """
-
-                    # Dodaj skrypty JavaScript do obsługi nawigacji i interakcji
-                    html += """
-                        <script>
-                            // Pobierz dane o powiązanych URL-ach
-                            fetch('/api/browsing_sessions')
-                                .then(response => response.json())
-                                .then(data => {
-                                    const currentUrl = window.location.pathname.substring(7); // Usuń '/proxy/'
-                                    const decodedCurrentUrl = decodeURIComponent(currentUrl);
-
-                                    // Znajdź sesję zawierającą bieżący URL
-                                    let relatedUrls = [];
-                                    for (const sessionId in data) {
-                                        const session = data[sessionId];
-                                        if (session.urls.includes(decodedCurrentUrl) || 
-                                            session.urls.some(url => url.includes(extractDomain(decodedCurrentUrl)))) {
-                                            relatedUrls = session.urls;
-                                            break;
-                                        }
-                                    }
-
-                                    // Wypełnij listę powiązanych URL-i
-                                    const urlsContainer = document.getElementById('related-urls');
-                                    if (relatedUrls.length > 0) {
-                                        let html = '<ul>';
-                                        relatedUrls.forEach(url => {
-                                            const encodedUrl = encodeURIComponent(url);
-                                            html += `<li><a href="/proxy/${encodedUrl}">${url}</a></li>`;
-                                        });
-                                        html += '</ul>';
-                                        urlsContainer.innerHTML = html;
-                                    } else {
-                                        urlsContainer.innerHTML = 'Nie znaleziono powiązanych URL-i.';
-                                    }
-
-                                    // Jeśli strona ma formularz, spróbuj go zrekonstruować
-                                    const formFields = document.getElementById('form-fields');
-                                    if (formFields) {
-                                        // Znajdź żądanie POST dla tego URL
-                                        fetch('/data')
-                                            .then(response => response.json())
-                                            .then(allData => {
-                                                const rawData = allData.raw_data || {};
-
-                                                // Szukaj żądania POST
-                                                let postRequest = null;
-                                                for (const url in rawData) {
-                                                    if (url === decodedCurrentUrl || url.includes(extractDomain(decodedCurrentUrl))) {
-                                                        for (const req of rawData[url]) {
-                                                            if (req.method === 'POST' && req.post_data) {
-                                                                postRequest = req;
-                                                                break;
-                                                            }
-                                                        }
-                                                        if (postRequest) break;
-                                                    }
-                                                }
-
-                                                if (postRequest && postRequest.post_data) {
-                                                    // Spróbuj zrekonstruować pola formularza
-                                                    try {
-                                                        // Sprawdź czy dane są w formacie URL-encoded
-                                                        const formParams = new URLSearchParams(postRequest.post_data);
-                                                        let fieldsHtml = '';
-
-                                                        for (const [name, value] of formParams.entries()) {
-                                                            if (name === 'password' || name.includes('pass')) {
-                                                                fieldsHtml += `
-                                                                    <div style="margin-bottom: 10px;">
-                                                                        <label for="${name}">${name}:</label><br>
-                                                                        <input type="password" id="${name}" name="${name}" value="${value}">
-                                                                    </div>
-                                                                `;
-                                                            } else {
-                                                                fieldsHtml += `
-                                                                    <div style="margin-bottom: 10px;">
-                                                                        <label for="${name}">${name}:</label><br>
-                                                                        <input type="text" id="${name}" name="${name}" value="${value}">
-                                                                    </div>
-                                                                `;
-                                                            }
-                                                        }
-
-                                                        if (fieldsHtml) {
-                                                            formFields.innerHTML = fieldsHtml;
-                                                        } else {
-                                                            formFields.innerHTML = `
-                                                                <div style="margin-bottom: 10px;">
-                                                                    <textarea style="width: 100%; height: 100px;" placeholder="Raw POST data:">${postRequest.post_data}</textarea>
-                                                                </div>
-                                                            `;
-                                                        }
-                                                    } catch (e) {
-                                                        // Jeśli nie udało się sparsować, pokaż surowe dane
-                                                        formFields.innerHTML = `
-                                                            <div style="margin-bottom: 10px;">
-                                                                <textarea style="width: 100%; height: 100px;" placeholder="Raw POST data:">${postRequest.post_data}</textarea>
-                                                            </div>
-                                                        `;
-                                                    }
-                                                } else {
-                                                    // Domyślny formularz
-                                                    formFields.innerHTML = `
-                                                        <div style="margin-bottom: 10px;">
-                                                            <label for="username">Nazwa użytkownika:</label><br>
-                                                            <input type="text" id="username" name="username">
-                                                        </div>
-                                                        <div style="margin-bottom: 10px;">
-                                                            <label for="password">Hasło:</label><br>
-                                                            <input type="password" id="password" name="password">
-                                                        </div>
-                                                    `;
-                                                }
-                                            });
-                                    }
-                                });
-
-                            // Funkcje nawigacji
-                            function goBack() {
-                                window.history.back();
-                            }
-
-                            function refreshPage() {
-                                window.location.reload();
-                            }
-
-                            function showRequestDetails() {
-                                const detailsDiv = document.getElementById('request-details');
-                                const detailsContent = document.getElementById('details-content');
-
-                                if (detailsDiv.style.display === 'none') {
-                                    // Pobierz szczegóły żądania
-                                    fetch('/data')
-                                        .then(response => response.json())
-                                        .then(data => {
-                                            const rawData = data.raw_data || {};
-                                            const currentUrl = decodeURIComponent(window.location.pathname.substring(7));
-
-                                            let requestDetails = null;
-                                            // Znajdź żądanie dla tego URL
-                                            if (rawData[currentUrl]) {
-                                                requestDetails = rawData[currentUrl][0];
-                                            } else {
-                                                // Szukaj częściowego dopasowania
-                                                for (const url in rawData) {
-                                                    if (url.includes(currentUrl) || currentUrl.includes(url)) {
-                                                        requestDetails = rawData[url][0];
-                                                        break;
-                                                    }
-                                                }
-                                            }
-
-                                            if (requestDetails) {
-                                                // Wyświetl szczegóły w formie tabeli
-                                                let html = `<h4>URL: ${currentUrl}</h4>`;
-
-                                                // Metoda i protokół
-                                                html += `<p><strong>Metoda:</strong> ${requestDetails.method}</p>`;
-                                                html += `<p><strong>Protokół:</strong> ${requestDetails.protocol}</p>`;
-
-                                                // Nagłówki
-                                                html += `<h4>Nagłówki:</h4>`;
-                                                html += `<table>
-                                                    <tr>
-                                                        <th>Nazwa</th>
-                                                        <th>Wartość</th>
-                                                    </tr>`;
-
-                                                for (const [header, value] of Object.entries(requestDetails.headers || {})) {
-                                                    html += `
-                                                        <tr>
-                                                            <td>${header}</td>
-                                                            <td>${value}</td>
-                                                        </tr>
-                                                    `;
-                                                }
-
-                                                html += `</table>`;
-
-                                                // Ciasteczka
-                                                if (requestDetails.cookies && Object.keys(requestDetails.cookies).length > 0) {
-                                                    html += `<h4>Ciasteczka:</h4>`;
-                                                    html += `<table>
-                                                        <tr>
-                                                            <th>Nazwa</th>
-                                                            <th>Wartość</th>
-                                                        </tr>`;
-
-                                                    for (const [name, value] of Object.entries(requestDetails.cookies)) {
-                                                        html += `
-                                                            <tr>
-                                                                <td>${name}</td>
-                                                                <td>${value}</td>
-                                                            </tr>
-                                                        `;
-                                                    }
-
-                                                    html += `</table>`;
-                                                }
-
-                                                // Dane POST
-                                                if (requestDetails.post_data) {
-                                                    html += `<h4>Dane POST:</h4>`;
-                                                    html += `<pre>${requestDetails.post_data}</pre>`;
-                                                }
-
-                                                detailsContent.innerHTML = html;
-                                            } else {
-                                                detailsContent.innerHTML = '<p>Nie znaleziono szczegółów żądania.</p>';
-                                            }
-                                        });
-
-                                    detailsDiv.style.display = 'block';
-                                } else {
-                                    detailsDiv.style.display = 'none';
-                                }
-    
     def load_captured_data(self, filename):
         """Wczytuje przechwycone dane z pliku"""
         try:
@@ -1838,17 +846,18 @@ class NetworkSniffer:
 
     def run(self):
         """Główna funkcja programu"""
-        print("=== Narzędzie do przechwytywania ruchu sieciowego ===")
+        print("=== Narzędzie do przechwytywania i analizy ruchu sieciowego ===")
 
         while True:
             try:
-                print("\nMenu:")
+                print("\nMenu główne:")
                 print("1. Wybierz interfejs sieciowy")
                 print("2. Skanuj sieć")
                 print("3. Pokaż znalezione urządzenia")
                 print("4. Rozpocznij przechwytywanie ruchu")
-                print("5. Wczytaj dane z pliku")
-                print("6. Uruchom przeglądarkę sesji")
+                print("5. Zarządzanie danymi")
+                print("6. Analiza ruchu")
+                print("7. Przeglądarka sesji")
                 print("0. Wyjdź")
 
                 try:
@@ -1877,24 +886,16 @@ class NetworkSniffer:
                     else:
                         print("Najpierw wybierz urządzenie.")
                 elif choice == "5":
-                    try:
-                        filename = input("Podaj nazwę pliku: ").strip()
-                        if filename:
-                            self.load_captured_data(filename)
-                        else:
-                            print("Nie podano nazwy pliku.")
-                    except (UnicodeDecodeError, KeyboardInterrupt):
-                        print("\nNieprawidłowe wejście. Operacja anulowana.")
+                    self.show_data_management_menu()
                 elif choice == "6":
-                    if self.captured_data:
-                        self.start_session_browser()
-                    else:
-                        print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+                    self.show_analysis_menu()
+                elif choice == "7":
+                    self.show_browser_menu()
                 elif choice == "0":
                     print("Wyjście z programu.")
                     break
                 else:
-                    print("Nieprawidłowy wybór. Wybierz opcję od 0 do 6.")
+                    print("Nieprawidłowy wybór. Wybierz opcję od 0 do 7.")
             except KeyboardInterrupt:
                 print("\n\nPrzerwano działanie. Czy chcesz wyjść z programu? (t/n): ", end="")
                 try:
@@ -1909,306 +910,3389 @@ class NetworkSniffer:
                     break
             except Exception as e:
                 print(f"\nWystąpił nieoczekiwany błąd: {e}")
+                import traceback
+                traceback.print_exc()
                 print("Kontynuowanie pracy...")
 
-                if self.path == '/':
-                    self.path = '/session_browser.html'
-                elif self.path == '/data':
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-                    with open('temp_session_data.json', 'rb') as f:
-                        self.wfile.write(f.read())
-                    return
+        def show_data_management_menu(self):
+            """Wyświetla menu zarządzania danymi"""
+            while True:
+                print("\nZarządzanie danymi:")
+                print("1. Zapisz przechwycone dane")
+                print("2. Wczytaj dane z pliku")
+                print("3. Połącz dane z wielu plików")
+                print("4. Wyczyść bieżące dane")
+                print("5. Eksportuj dane jako HTML")
+                print("0. Powrót do menu głównego")
 
-                return http.server.SimpleHTTPRequestHandler.do_GET(self)
+                try:
+                    choice = input("\nWybierz opcję: ").strip()
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Spróbuj ponownie.")
+                    continue
 
-        # Utwórz plik HTML dla przeglądarki sesji
-        with open('session_browser.html', 'w') as f:
-            f.write('''
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Przeglądarka sesji</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-        h1 { color: #333; }
-        .url-list { width: 30%; float: left; overflow-y: auto; height: 600px; }
-        .url-details { width: 65%; float: right; border-left: 1px solid #ccc; padding-left: 20px; height: 600px; overflow-y: auto; }
-        .url-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #eee; }
-        .url-item:hover { background-color: #f5f5f5; }
-        .selected { background-color: #e0e0e0; }
-        .request-details { margin-top: 20px; border: 1px solid #ddd; padding: 10px; border-radius: 5px; }
-        .cookie-table { width: 100%; border-collapse: collapse; }
-        .cookie-table th, .cookie-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        .cookie-table th { background-color: #f2f2f2; }
-        .headers-table { width: 100%; border-collapse: collapse; }
-        .headers-table th, .headers-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        .headers-table th { background-color: #f2f2f2; }
-        .replay-btn { background-color: #4CAF50; color: white; padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; }
-        .replay-btn:hover { background-color: #45a049; }
-    </style>
-</head>
-<body>
-    <h1>Przeglądarka sesji</h1>
+                if choice == "1":
+                    self.save_captured_data()
+                elif choice == "2":
+                    try:
+                        filename = input("Podaj nazwę pliku: ").strip()
+                        if filename:
+                            self.load_captured_data(filename)
+                        else:
+                            print("Nie podano nazwy pliku.")
+                    except (UnicodeDecodeError, KeyboardInterrupt):
+                        print("\nNieprawidłowe wejście. Operacja anulowana.")
+                elif choice == "3":
+                    try:
+                        filenames_input = input("Podaj nazwy plików (oddzielone przecinkiem): ").strip()
+                        if filenames_input:
+                            filenames = [f.strip() for f in filenames_input.split(',')]
+                            self.merge_sessions(filenames)
+                        else:
+                            print("Nie podano nazw plików.")
+                    except (UnicodeDecodeError, KeyboardInterrupt):
+                        print("\nNieprawidłowe wejście. Operacja anulowana.")
+                elif choice == "4":
+                    try:
+                        confirm = input("Czy na pewno chcesz wyczyścić wszystkie dane? (t/n): ").strip().lower()
+                        if confirm == 't' or confirm == 'tak':
+                            self.captured_data = {}
+                            print("Dane zostały wyczyszczone.")
+                        else:
+                            print("Operacja anulowana.")
+                    except (UnicodeDecodeError, KeyboardInterrupt):
+                        print("\nNieprawidłowe wejście. Operacja anulowana.")
+                elif choice == "5":
+                    try:
+                        filename = input("Podaj nazwę pliku HTML: ").strip()
+                        if filename:
+                            self.export_as_html(filename)
+                        else:
+                            print("Nie podano nazwy pliku.")
+                    except (UnicodeDecodeError, KeyboardInterrupt):
+                        print("\nNieprawidłowe wejście. Operacja anulowana.")
+                elif choice == "0":
+                    break
+                else:
+                    print("Nieprawidłowy wybór. Wybierz opcję od 0 do 5.")
 
-    <div class="url-list" id="urlList">
-        <h2>Zarejestrowane URL</h2>
-        <div id="urls"></div>
-    </div>
+        def show_analysis_menu(self):
+            """Wyświetla menu analizy ruchu"""
+            while True:
+                print("\nAnaliza ruchu:")
+                print("1. Przeprowadź pełną analizę ruchu")
+                print("2. Znajdź problemy bezpieczeństwa")
+                print("3. Znajdź problemy wydajności")
+                print("4. Analizuj wzorce ruchu")
+                print("5. Generuj raport analizy")
+                print("0. Powrót do menu głównego")
 
-    <div class="url-details" id="urlDetails">
-        <h2>Szczegóły żądania</h2>
-        <div id="details">Wybierz URL z listy po lewej stronie</div>
-    </div>
+                try:
+                    choice = input("\nWybierz opcję: ").strip()
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Spróbuj ponownie.")
+                    continue
 
-    <script>
-        // Pobierz dane
-        fetch('/data')
-            .then(response => response.json())
-            .then(data => {
-                const urlsContainer = document.getElementById('urls');
-                const detailsContainer = document.getElementById('details');
+                if choice == "1":
+                    if self.captured_data:
+                        self.analyze_traffic()
+                    else:
+                        print("Brak danych do analizy.")
+                elif choice == "2":
+                    if self.captured_data:
+                        self.analyze_security_issues()
+                    else:
+                        print("Brak danych do analizy.")
+                elif choice == "3":
+                    if self.captured_data:
+                        self.analyze_performance_issues()
+                    else:
+                        print("Brak danych do analizy.")
+                elif choice == "4":
+                    if self.captured_data:
+                        self.analyze_traffic_patterns()
+                    else:
+                        print("Brak danych do analizy.")
+                elif choice == "5":
+                    if self.captured_data:
+                        filename = input("Podaj nazwę pliku raportu: ").strip()
+                        if filename:
+                            self.generate_analysis_report(filename)
+                        else:
+                            print("Nie podano nazwy pliku.")
+                    else:
+                        print("Brak danych do analizy.")
+                elif choice == "0":
+                    break
+                else:
+                    print("Nieprawidłowy wybór. Wybierz opcję od 0 do 5.")
 
-                // Wyświetl listę URL
-                Object.keys(data).forEach(url => {
-                    const div = document.createElement('div');
-                    div.className = 'url-item';
-                    div.textContent = url;
-                    div.onclick = () => {
-                        // Usuń poprzednie zaznaczenie
-                        document.querySelectorAll('.url-item').forEach(el => el.classList.remove('selected'));
-                        div.classList.add('selected');
+        def show_browser_menu(self):
+            """Wyświetla menu przeglądarki sesji"""
+            while True:
+                print("\nPrzeglądarka sesji:")
+                print("1. Uruchom standardową przeglądarkę sesji")
+                print("2. Uruchom interaktywną przeglądarkę sesji")
+                print("3. Odtwórz konkretne żądanie")
+                print("4. Symuluj całą sesję przeglądania")
+                print("0. Powrót do menu głównego")
 
-                        // Wyświetl szczegóły żądań
-                        const requests = data[url];
-                        let detailsHtml = `<h3>URL: ${url}</h3>`;
+                try:
+                    choice = input("\nWybierz opcję: ").strip()
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Spróbuj ponownie.")
+                    continue
 
-                        requests.forEach((req, index) => {
-                            detailsHtml += `
-                            <div class="request-details">
-                                <h4>Żądanie #${index + 1} (${req.timestamp})</h4>
-                                <p><strong>Metoda:</strong> ${req.method}</p>
+                if choice == "1":
+                    if self.captured_data:
+                        self.start_session_browser()
+                    else:
+                        print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+                elif choice == "2":
+                    if self.captured_data:
+                        self.start_interactive_session_browser()
+                    else:
+                        print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+                elif choice == "3":
+                    if self.captured_data:
+                        self.replay_specific_request()
+                    else:
+                        print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+                elif choice == "4":
+                    if self.captured_data:
+                        self.simulate_browsing_session()
+                    else:
+                        print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+                elif choice == "0":
+                    break
+                else:
+                    print("Nieprawidłowy wybór. Wybierz opcję od 0 do 4.")
 
-                                <h5>Nagłówki:</h5>
-                                <table class="headers-table">
-                                    <tr>
-                                        <th>Nagłówek</th>
-                                        <th>Wartość</th>
-                                    </tr>
-                            `;
+    def create_session_browser_app(self):
+        """Tworzy aplikację do przeglądania sesji w formie interaktywnej przeglądarki"""
+        if not self.captured_data or len(self.captured_data) == 0:
+            print("Błąd: Brak danych do wyświetlenia.")
+            return False
 
-                            for (const [header, value] of Object.entries(req.headers)) {
-                                detailsHtml += `
-                                    <tr>
-                                        <td>${header}</td>
-                                        <td>${value}</td>
-                                    </tr>
-                                `;
-                            }
+        try:
+            # Zapisz dane do pliku tymczasowego dla przeglądarki
+            with open('temp_session_data.json', 'w', encoding='utf-8') as f:
+                # Konwertuj dane do formatu JSON
+                json_data = {}
+                for url, requests in self.captured_data.items():
+                    json_data[url] = []
+                    for req in requests:
+                        # Przygotuj kopię danych żądania
+                        req_copy = dict(req)
 
-                            detailsHtml += `</table>`;
+                        # Konwertuj timestamp na string jeśli jest obiektem datetime
+                        if isinstance(req_copy.get('timestamp'), datetime):
+                            req_copy['timestamp'] = req_copy['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
 
-                            if (Object.keys(req.cookies).length > 0) {
-                                detailsHtml += `
-                                <h5>Ciasteczka:</h5>
-                                <table class="cookie-table">
-                                    <tr>
-                                        <th>Nazwa</th>
-                                        <th>Wartość</th>
-                                    </tr>
-                                `;
+                        # Upewnij się, że wszystkie wartości są serializowalne
+                        for key, value in list(req_copy.items()):
+                            if isinstance(value, (dict, list)):
+                                try:
+                                    # Sprawdź czy struktura jest serializowalna
+                                    json.dumps(value)
+                                except:
+                                    # Jeśli nie, przekonwertuj na string
+                                    req_copy[key] = str(value)
 
-                                for (const [name, value] of Object.entries(req.cookies)) {
-                                    detailsHtml += `
-                                        <tr>
-                                            <td>${name}</td>
-                                            <td>${value}</td>
-                                        </tr>
-                                    `;
-                                }
+                        json_data[url].append(req_copy)
 
-                                detailsHtml += `</table>`;
-                            }
+                json.dump(json_data, f, indent=2, default=str)
 
-                            if (req.post_data) {
-                                detailsHtml += `
-                                <h5>Dane POST:</h5>
-                                <pre>${req.post_data}</pre>
-                                `;
-                            }
+            # Utwórz plik HTML dla interaktywnej przeglądarki sesji
+            with open('session_browser_app.html', 'w', encoding='utf-8') as f:
+                f.write(self._get_session_browser_html())
 
-                            detailsHtml += `
-                                <button class="replay-btn" onclick="replayRequest('${url}', ${index})">Odtwórz żądanie</button>
-                            </div>
-                            `;
-                        });
+            return True
+        except Exception as e:
+            print(f"Błąd podczas tworzenia aplikacji do przeglądania sesji: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
-                        detailsContainer.innerHTML = detailsHtml;
-                    };
-
-                    urlsContainer.appendChild(div);
-                });
-            })
-            .catch(error => {
-                console.error('Błąd podczas pobierania danych:', error);
-                document.getElementById('details').innerHTML = `<p>Błąd podczas pobierania danych: ${error.message}</p>`;
-            });
-
-        // Funkcja do odtwarzania żądania
-        function replayRequest(url, index) {
-    fetch('/data')
-        .then(response => response.json())
-        .then(data => {
-            const request = data[url][index];
-
-            // Utwórz iframe aby symulować przeglądarkę
-            const iframe = document.createElement('iframe');
-            iframe.style.width = '100%';
-            iframe.style.height = '600px';
-            iframe.style.border = '1px solid #ccc';
-
-            // Dodaj iframe do strony
-            const detailsDiv = document.querySelector(`#details .request-details:nth-child(${index + 2})`);
-            detailsDiv.appendChild(iframe);
-
-            // Przygotuj pełny adres URL
-            const fullUrl = url.startsWith('http') ? url : `http://${url}`;
-
-            // Przygotuj zawartość dokumentu HTML w iframe
-            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-            
-            // Funkcja do wysyłania żądania
-            function sendRequest() {
-                // Utwórz formularz do wysłania żądania
-                const form = iframeDoc.createElement('form');
-                form.method = request.method || 'GET';
-                form.action = fullUrl;
-                form.target = '_self';
-                form.enctype = 'application/x-www-form-urlencoded';
-
-                // Dodaj ciasteczka
-                if (request.cookies && Object.keys(request.cookies).length > 0) {
-                    const cookieScript = iframeDoc.createElement('script');
-                    let cookieCode = '';
-                    for (const [name, value] of Object.entries(request.cookies)) {
-                        cookieCode += `document.cookie = "${name}=${value}; path=/; domain=${new URL(fullUrl).hostname}";`;
-                    }
-                    cookieScript.textContent = cookieCode;
-                    iframeDoc.head.appendChild(cookieScript);
-                }
-
-                // Dodaj dane POST jeśli istnieją
-                if (request.method === 'POST' && request.post_data) {
-                    try {
-                        const dataParams = new URLSearchParams(request.post_data);
-                        dataParams.forEach((value, key) => {
-                            const input = iframeDoc.createElement('input');
-                            input.type = 'hidden';
-                            input.name = key;
-                            input.value = value;
-                            form.appendChild(input);
-                        });
-                    } catch (error) {
-                        console.error('Błąd podczas przetwarzania danych POST:', error);
-                        // Dodaj surowe dane POST jako jeden parametr
-                        const input = iframeDoc.createElement('input');
-                        input.type = 'hidden';
-                        input.name = 'rawPostData';
-                        input.value = request.post_data;
-                        form.appendChild(input);
-                    }
-                }
-
-                // Dodaj nagłówki niestandardowe jako meta tagi
-                if (request.headers) {
-                    for (const [header, value] of Object.entries(request.headers)) {
-                        const metaTag = iframeDoc.createElement('meta');
-                        metaTag.name = `x-custom-header-${header.toLowerCase()}`;
-                        metaTag.content = value;
-                        iframeDoc.head.appendChild(metaTag);
-                    }
-                }
-
-                // Otwórz dokument do zapisu
-                iframeDoc.open();
-                
-                // Wygeneruj podstawowy dokument HTML
-                const htmlContent = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Odtwarzanie żądania</title>
-                    <meta charset="UTF-8">
-                    <style>
-                        body { font-family: Arial, sans-serif; margin: 20px; }
-                        .request-info { 
-                            background-color: #f4f4f4; 
-                            padding: 10px; 
-                            margin-bottom: 20px; 
-                            border: 1px solid #ddd; 
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="request-info">
-                        <h2>Odtwarzanie żądania</h2>
-                        <p><strong>URL:</strong> ${fullUrl}</p>
-                        <p><strong>Metoda:</strong> ${request.method || 'GET'}</p>
-                        <p><strong>Timestamp:</strong> ${request.timestamp}</p>
+    def _get_session_browser_html(self):
+        """Generuje kod HTML dla interaktywnej przeglądarki sesji"""
+        return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Interaktywna przeglądarka sesji</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+            .container { display: flex; height: 100vh; }
+            .sidebar { width: 300px; background: #f5f5f5; padding: 15px; overflow-y: auto; border-right: 1px solid #ddd; }
+            .main-content { flex: 1; display: flex; flex-direction: column; }
+            .url-bar { padding: 10px; background: #e0e0e0; border-bottom: 1px solid #ccc; display: flex; }
+            .url-input { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; margin-right: 5px; }
+            .browser-window { flex: 1; border: none; width: 100%; }
+            .url-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #eee; position: relative; }
+            .url-item:hover { background-color: #e9e9e9; }
+            .url-item.selected { background-color: #d7d7d7; }
+            .request-count { position: absolute; right: 10px; top: 10px; background: #4CAF50; color: white; 
+                             border-radius: 50%; width: 20px; height: 20px; text-align: center; line-height: 20px; font-size: 12px; }
+            .navigation-buttons { display: flex; margin-right: 10px; }
+            .nav-btn { padding: 8px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; 
+                      margin-right: 5px; cursor: pointer; }
+            .nav-btn:hover { background: #e0e0e0; }
+            .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            .protocol-badge { display: inline-block; padding: 2px 5px; border-radius: 3px; margin-right: 5px; 
+                             font-size: 11px; font-weight: bold; }
+            .http-badge { background: #4CAF50; color: white; }
+            .https-badge { background: #2196F3; color: white; }
+            .tab-buttons { display: flex; background: #e0e0e0; border-bottom: 1px solid #ccc; }
+            .tab-btn { padding: 10px 15px; cursor: pointer; border: none; background: none; outline: none; }
+            .tab-btn.active { background: #fff; border-bottom: 2px solid #4CAF50; }
+            .tab-content { padding: 15px; overflow-y: auto; max-height: 300px; display: none; }
+            .tab-content.active { display: block; }
+            .detail-section { margin-bottom: 15px; }
+            .detail-section h3 { margin-top: 0; }
+            .cookie-table, .header-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+            .cookie-table th, .cookie-table td, .header-table th, .header-table td { 
+                padding: 8px; border: 1px solid #ddd; text-align: left; 
+            }
+            .cookie-table th, .header-table th { background: #f2f2f2; }
+            .btn-replay { background: #4CAF50; color: white; border: none; padding: 8px 15px; border-radius: 4px; 
+                          cursor: pointer; display: block; margin-top: 10px; }
+            .btn-replay:hover { background: #45a049; }
+            .pagination { display: flex; justify-content: center; padding: 10px; background: #f5f5f5; }
+            .page-btn { padding: 5px 10px; margin: 0 5px; cursor: pointer; border: 1px solid #ccc; border-radius: 3px; }
+            .page-btn.active { background: #4CAF50; color: white; }
+            .search-bar { padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd; }
+            .search-input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+            .browser-history { max-height: calc(100vh - 300px); overflow-y: auto; }
+            .history-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #eee; }
+            .history-item:hover { background: #f0f0f0; }
+            .session-info { padding: 10px; background: #f8f8f8; border-bottom: 1px solid #ddd; font-size: 12px; }
+            .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8);
+                              display: flex; justify-content: center; align-items: center; z-index: 1000; }
+            .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 30px;
+                      height: 30px; animation: spin 2s linear infinite; }
+            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="sidebar">
+                <div class="session-info">
+                    <div id="sessionStats"></div>
+                </div>
+                <div class="search-bar">
+                    <input type="text" class="search-input" id="searchUrl" placeholder="Szukaj URL...">
+                </div>
+                <div id="urlList"></div>
+            </div>
+            <div class="main-content">
+                <div class="url-bar">
+                    <div class="navigation-buttons">
+                        <button class="nav-btn" id="backBtn" disabled>&lt;</button>
+                        <button class="nav-btn" id="forwardBtn" disabled>&gt;</button>
+                        <button class="nav-btn" id="refreshBtn">↻</button>
                     </div>
-                    
-                    <!-- Formularz do automatycznego wysłania -->
-                    ${form.outerHTML}
+                    <input type="text" class="url-input" id="urlInput" placeholder="URL" readonly>
+                </div>
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="browserTab">Przeglądarka</button>
+                    <button class="tab-btn" data-tab="requestsTab">Szczegóły żądań</button>
+                    <button class="tab-btn" data-tab="cookiesTab">Ciasteczka</button>
+                    <button class="tab-btn" data-tab="historyTab">Historia</button>
+                </div>
+                <div class="tab-content active" id="browserTab">
+                    <iframe id="browserFrame" class="browser-window"></iframe>
+                </div>
+                <div class="tab-content" id="requestsTab">
+                    <div id="requestDetails">
+                        <div class="pagination" id="requestPagination"></div>
+                        <div id="requestContent"></div>
+                    </div>
+                </div>
+                <div class="tab-content" id="cookiesTab">
+                    <div id="cookieDetails"></div>
+                </div>
+                <div class="tab-content" id="historyTab">
+                    <div class="browser-history" id="browserHistory"></div>
+                </div>
+            </div>
+        </div>
 
-                    <script>
-                        // Automatyczne wysłanie formularza
-                        document.forms[0].submit();
-                    </script>
-                </body>
-                </html>
-                `;
+        <script>
+            // Główne zmienne
+            let sessionData = {};
+            let currentUrl = null;
+            let browserHistory = [];
+            let historyPosition = -1;
+            let currentRequestIndex = 0;
+            let currentRequests = [];
 
-                // Wpisz zawartość i zamknij dokument
-                iframeDoc.write(htmlContent);
-                iframeDoc.close();
+            // Stan aplikacji
+            const appState = {
+                selectedUrl: null,
+                filteredUrls: [],
+                allUrls: [],
+                browsedPages: new Set(),
+                cookies: {},
+                history: []
+            };
+
+            // Funkcja inicjalizująca
+            async function init() {
+                try {
+                    // Pobierz dane sesji
+                    const response = await fetch('/data');
+                    sessionData = await response.json();
+
+                    // Inicjalizacja listy URL
+                    appState.allUrls = Object.keys(sessionData);
+                    appState.filteredUrls = [...appState.allUrls];
+
+                    // Wyświetl statystyki
+                    displaySessionStats();
+
+                    // Wyświetl listę URL
+                    renderUrlList();
+
+                    // Dodaj nasłuchiwanie zdarzeń
+                    setupEventListeners();
+                } catch (error) {
+                    console.error('Błąd podczas inicjalizacji:', error);
+                    alert('Wystąpił błąd podczas ładowania danych sesji.');
+                }
             }
 
-            // Wywołaj funkcję wysłania żądania
-            sendRequest();
-        })
-        .catch(error => {
-            console.error('Błąd podczas odtwarzania żądania:', error);
-            alert(`Błąd podczas odtwarzania żądania: ${error.message}`);
-        });
-        }
-    </script>
-</body>
-</html>
-            ''')
+            // Funkcja wyświetlająca statystyki sesji
+            function displaySessionStats() {
+                const urlCount = appState.allUrls.length;
+                let requestCount = 0;
+                let uniqueDomains = new Set();
 
-        # Uruchom serwer HTTP
-        handler = SessionHandler
-        with socketserver.TCPServer(("", 8000), handler) as httpd:
-            print("Serwer uruchomiony na http://localhost:8000")
+                appState.allUrls.forEach(url => {
+                    requestCount += sessionData[url].length;
+
+                    try {
+                        let domain = new URL(url).hostname;
+                        uniqueDomains.add(domain);
+                    } catch (e) {
+                        // Obsługa nieprawidłowych URL
+                        if (url.includes('://')) {
+                            const parts = url.split('://')[1].split('/')[0];
+                            uniqueDomains.add(parts);
+                        }
+                    }
+                });
+
+                document.getElementById('sessionStats').innerHTML = `
+                    <div><strong>URL:</strong> ${urlCount}</div>
+                    <div><strong>Domeny:</strong> ${uniqueDomains.size}</div>
+                    <div><strong>Żądania:</strong> ${requestCount}</div>
+                `;
+            }
+
+            // Funkcja renderująca listę URL
+            function renderUrlList() {
+                const urlListElement = document.getElementById('urlList');
+                urlListElement.innerHTML = '';
+
+                appState.filteredUrls.forEach(url => {
+                    const urlItem = document.createElement('div');
+                    urlItem.className = 'url-item';
+                    if (appState.selectedUrl === url) {
+                        urlItem.classList.add('selected');
+                    }
+
+                    // Określ protokół
+                    const isHttps = url.startsWith('https://');
+                    const protocol = isHttps ? 'HTTPS' : 'HTTP';
+                    const protocolClass = isHttps ? 'https-badge' : 'http-badge';
+
+                    // Skróć URL do wyświetlenia
+                    let displayUrl = url;
+                    if (url.length > 40) {
+                        const urlObj = new URL(url);
+                        displayUrl = urlObj.hostname + urlObj.pathname.substring(0, 20) + '...';
+                    }
+
+                    urlItem.innerHTML = `
+                        <span class="protocol-badge ${protocolClass}">${protocol}</span>
+                        ${displayUrl}
+                        <span class="request-count">${sessionData[url].length}</span>
+                    `;
+
+                    urlItem.addEventListener('click', () => {
+                        selectUrl(url);
+                    });
+
+                    urlListElement.appendChild(urlItem);
+                });
+            }
+
+            // Funkcja wybierająca URL
+            function selectUrl(url) {
+                appState.selectedUrl = url;
+                currentUrl = url;
+                currentRequests = sessionData[url];
+                currentRequestIndex = 0;
+
+                // Aktualizuj historię przeglądarki
+                if (historyPosition === browserHistory.length - 1) {
+                    browserHistory.push(url);
+                    historyPosition++;
+                } else {
+                    browserHistory = browserHistory.slice(0, historyPosition + 1);
+                    browserHistory.push(url);
+                    historyPosition = browserHistory.length - 1;
+                }
+
+                // Aktualizuj listę URL
+                renderUrlList();
+
+                // Aktualizuj pasek URL
+                document.getElementById('urlInput').value = url;
+
+                // Aktualizuj przyciski nawigacji
+                updateNavigationButtons();
+
+                // Załaduj stronę do przeglądarki
+                loadPageInBrowser(url);
+
+                // Wyświetl szczegóły żądań
+                renderRequestDetails();
+
+                // Wyświetl ciasteczka
+                renderCookieDetails();
+
+                // Dodaj do historii przeglądania
+                addToHistory(url);
+            }
+
+            // Funkcja ładująca stronę do przeglądarki
+            function loadPageInBrowser(url) {
+                const iframe = document.getElementById('browserFrame');
+
+                // Utwórz symulowaną zawartość strony
+                const pageContent = generatePageContent(url, currentRequests);
+
+                // Ustaw zawartość iframe
+                const iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
+                iframeDocument.open();
+                iframeDocument.write(pageContent);
+                iframeDocument.close();
+
+                // Dodaj do odwiedzonych stron
+                appState.browsedPages.add(url);
+            }
+
+            // Funkcja generująca zawartość strony
+            function generatePageContent(url, requests) {
+                // Dla HTTPS stron, wyświetl informację o braku możliwości wyświetlenia
+                if (url.startsWith('https://')) {
+                    return `
+                        <html>
+                        <head>
+                            <style>
+                                body { font-family: Arial, sans-serif; margin: 0; padding: 20px; text-align: center; }
+                                .https-info { max-width: 600px; margin: 50px auto; padding: 20px; 
+                                            border: 1px solid #ccc; border-radius: 5px; background: #f9f9f9; }
+                                h2 { color: #2196F3; }
+                                .lock-icon { font-size: 48px; color: #2196F3; margin-bottom: 20px; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="https-info">
+                                <div class="lock-icon">🔒</div>
+                                <h2>Połączenie HTTPS</h2>
+                                <p>Ta strona używa szyfrowanego połączenia HTTPS. Nie jest możliwe wyświetlenie jej rzeczywistej zawartości 
+                                   w przeglądarce sesji, ponieważ dane zostały zaszyfrowane.</p>
+                                <p>Możesz zobaczyć szczegóły żądań i ciasteczka w odpowiednich zakładkach.</p>
+                                <hr>
+                                <p><strong>URL:</strong> ${url}</p>
+                                <p><strong>Liczba zarejestrowanych żądań:</strong> ${requests.length}</p>
+                            </div>
+                        </body>
+                        </html>
+                    `;
+                }
+
+                // Dla stron HTTP, spróbuj odtworzyć zawartość na podstawie zebranych danych
+                // To jest bardzo uproszczona symulacja zawartości - w rzeczywistości potrzebny byłby bardziej zaawansowany mechanizm
+                let htmlContent = `
+                    <html>
+                    <head>
+                        <style>
+                            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+                            .page-header { background: #f5f5f5; padding: 15px; border-bottom: 1px solid #ddd; }
+                            .content-section { margin: 20px 0; }
+                            .request-item { margin-bottom: 10px; padding: 10px; border: 1px solid #eee; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="page-header">
+                            <h2>Symulacja strony: ${url}</h2>
+                            <p>Ta strona jest symulacją na podstawie przechwyconych danych.</p>
+                        </div>
+                        <div class="content-section">
+                            <h3>Zarejestrowane żądania dla tej strony:</h3>
+                `;
+
+                requests.forEach((req, index) => {
+                    htmlContent += `
+                        <div class="request-item">
+                            <strong>Żądanie #${index + 1}</strong> (${req.timestamp})<br>
+                            Metoda: ${req.method}<br>
+                            Protokół: ${req.protocol || 'HTTP'}<br>
+                    `;
+
+                    if (req.post_data) {
+                        htmlContent += `<p>Dane POST: ${req.post_data}</p>`;
+                    }
+
+                    htmlContent += `</div>`;
+                });
+
+                htmlContent += `
+                        </div>
+                    </body>
+                    </html>
+                `;
+
+                return htmlContent;
+            }
+
+            // Funkcja renderująca szczegóły żądań
+            function renderRequestDetails() {
+                if (!currentUrl || !currentRequests || currentRequests.length === 0) {
+                    return;
+                }
+
+                // Renderuj paginację
+                const paginationElement = document.getElementById('requestPagination');
+                paginationElement.innerHTML = '';
+
+                for (let i = 0; i < currentRequests.length; i++) {
+                    const pageBtn = document.createElement('div');
+                    pageBtn.className = 'page-btn';
+                    if (i === currentRequestIndex) {
+                        pageBtn.classList.add('active');
+                    }
+                    pageBtn.textContent = i + 1;
+                    pageBtn.addEventListener('click', () => {
+                        currentRequestIndex = i;
+                        renderRequestDetails();
+                    });
+                    paginationElement.appendChild(pageBtn);
+                }
+
+                // Renderuj szczegóły wybranego żądania
+                const requestContentElement = document.getElementById('requestContent');
+                const request = currentRequests[currentRequestIndex];
+
+                let requestHtml = `
+                    <div class="detail-section">
+                        <h3>Żądanie #${currentRequestIndex + 1}</h3>
+                        <p><strong>Czas:</strong> ${request.timestamp}</p>
+                        <p><strong>Metoda:</strong> ${request.method}</p>
+                        <p><strong>Protokół:</strong> ${request.protocol || 'HTTP'}</p>
+
+                        <h4>Nagłówki:</h4>
+                        <table class="header-table">
+                            <tr>
+                                <th>Nagłówek</th>
+                                <th>Wartość</th>
+                            </tr>
+                `;
+
+                // Dodaj nagłówki
+                for (const [header, value] of Object.entries(request.headers || {})) {
+                    requestHtml += `
+                        <tr>
+                            <td>${header}</td>
+                            <td>${value}</td>
+                        </tr>
+                    `;
+                }
+
+                requestHtml += `</table>`;
+
+                // Dodaj dane POST
+                if (request.post_data) {
+                    requestHtml += `
+                        <h4>Dane POST:</h4>
+                        <pre>${request.post_data}</pre>
+                    `;
+                }
+
+                // Dodaj przycisk do odtworzenia żądania
+                requestHtml += `
+                    <button class="btn-replay" onclick="replayRequest('${currentUrl}', ${currentRequestIndex})">
+                        Odtwórz to żądanie
+                    </button>
+                </div>
+                `;
+
+                requestContentElement.innerHTML = requestHtml;
+            }
+
+            // Funkcja renderująca szczegóły ciasteczek
+            function renderCookieDetails() {
+                const cookieDetailsElement = document.getElementById('cookieDetails');
+
+                if (!currentUrl || !currentRequests || currentRequests.length === 0) {
+                    cookieDetailsElement.innerHTML = '<p>Brak danych o ciasteczkach.</p>';
+                    return;
+                }
+
+                // Zbierz wszystkie ciasteczka z żądań
+                const allCookies = {};
+                currentRequests.forEach(req => {
+                    if (req.cookies && Object.keys(req.cookies).length > 0) {
+                        for (const [name, value] of Object.entries(req.cookies)) {
+                            allCookies[name] = value;
+                        }
+                    }
+                });
+
+                if (Object.keys(allCookies).length === 0) {
+                    cookieDetailsElement.innerHTML = '<p>Brak ciasteczek dla tej strony.</p>';
+                    return;
+                }
+
+                let cookieHtml = `
+                    <h3>Ciasteczka dla ${currentUrl}</h3>
+                    <table class="cookie-table">
+                        <tr>
+                            <th>Nazwa</th>
+                            <th>Wartość</th>
+                        </tr>
+                `;
+
+                for (const [name, value] of Object.entries(allCookies)) {
+                    cookieHtml += `
+                        <tr>
+                            <td>${name}</td>
+                            <td>${value}</td>
+                        </tr>
+                    `;
+                }
+
+                cookieHtml += `</table>`;
+                cookieDetailsElement.innerHTML = cookieHtml;
+            }
+
+            // Funkcja dodająca URL do historii
+            function addToHistory(url) {
+                const historyElement = document.getElementById('browserHistory');
+
+                // Sprawdź czy URL już istnieje w historii
+                if (!appState.history.includes(url)) {
+                    appState.history.unshift(url);
+
+                    // Ogranicz historię do 50 elementów
+                    if (appState.history.length > 50) {
+                        appState.history.pop();
+                    }
+
+                    // Renderuj historię
+                    renderHistory();
+                }
+            }
+
+            // Funkcja renderująca historię
+            function renderHistory() {
+                const historyElement = document.getElementById('browserHistory');
+                historyElement.innerHTML = '';
+
+                appState.history.forEach(url => {
+                    const historyItem = document.createElement('div');
+                    historyItem.className = 'history-item';
+
+                    // Określ protokół
+                    const isHttps = url.startsWith('https://');
+                    const protocol = isHttps ? 'HTTPS' : 'HTTP';
+                    const protocolClass = isHttps ? 'https-badge' : 'http-badge';
+
+                    // Skróć URL do wyświetlenia
+                    let displayUrl = url;
+                    if (url.length > 40) {
+                        try {
+                            const urlObj = new URL(url);
+                            displayUrl = urlObj.hostname + urlObj.pathname.substring(0, 20) + '...';
+                        } catch (e) {
+                            displayUrl = url.substring(0, 40) + '...';
+                        }
+                    }
+
+                    historyItem.innerHTML = `
+                        <span class="protocol-badge ${protocolClass}">${protocol}</span>
+                        ${displayUrl}
+                    `;
+
+                    historyItem.addEventListener('click', () => {
+                        selectUrl(url);
+                    });
+
+                    historyElement.appendChild(historyItem);
+                });
+            }
+
+            // Funkcja aktualizująca przyciski nawigacji
+            function updateNavigationButtons() {
+                const backBtn = document.getElementById('backBtn');
+                const forwardBtn = document.getElementById('forwardBtn');
+
+                backBtn.disabled = historyPosition <= 0;
+                forwardBtn.disabled = historyPosition >= browserHistory.length - 1;
+            }
+
+            // Funkcja do odtwarzania żądania
+            function replayRequest(url, requestIndex) {
+                const request = sessionData[url][requestIndex];
+
+                alert(`Symulowanie odtworzenia żądania: ${request.method} ${url}`);
+
+                // W pełnej implementacji tutaj wysyłałoby się żądanie do serwera proxy,
+                // który odtwarzałby oryginalne żądanie i przekazywał odpowiedź
+            }
+
+            // Funkcja ustawiająca nasłuchiwanie zdarzeń
+            function setupEventListeners() {
+                // Obsługa nawigacji
+                document.getElementById('backBtn').addEventListener('click', () => {
+                    if (historyPosition > 0) {
+                        historyPosition--;
+                        selectUrl(browserHistory[historyPosition]);
+                    }
+                });
+
+                document.getElementById('forwardBtn').addEventListener('click', () => {
+                    if (historyPosition < browserHistory.length - 1) {
+                        historyPosition++;
+                        selectUrl(browserHistory[historyPosition]);
+                    }
+                });
+
+                document.getElementById('refreshBtn').addEventListener('click', () => {
+                    if (currentUrl) {
+                        loadPageInBrowser(currentUrl);
+                    }
+                });
+
+                // Obsługa zakładek
+                document.querySelectorAll('.tab-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        // Usuń aktywną klasę ze wszystkich zakładek
+                        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+                        // Dodaj aktywną klasę do wybranej zakładki
+                        btn.classList.add('active');
+                        const tabId = btn.getAttribute('data-tab');
+                        document.getElementById(tabId).classList.add('active');
+                    });
+                });
+
+                // Obsługa wyszukiwania
+                document.getElementById('searchUrl').addEventListener('input', event => {
+                    const searchTerm = event.target.value.toLowerCase();
+
+                    if (searchTerm === '') {
+                        appState.filteredUrls = [...appState.allUrls];
+                    } else {
+                        appState.filteredUrls = appState.allUrls.filter(url => 
+                            url.toLowerCase().includes(searchTerm)
+                        );
+                    }
+
+                    renderUrlList();
+                });
+            }
+
+            // Inicjalizacja aplikacji
+            document.addEventListener('DOMContentLoaded', init);
+        </script>
+    </body>
+    </html>
+    '''
+
+    def replay_request(self, url, request_data):
+        """Odtwarza zapisane żądanie HTTP
+
+        Args:
+            url (str): Adres URL do którego ma być wysłane żądanie
+            request_data (dict): Dane żądania zawierające metodę, nagłówki, ciasteczka itp.
+
+        Returns:
+            dict: Odpowiedź zawierająca status, nagłówki i treść
+        """
+        try:
+            print(f"Odtwarzanie żądania {request_data['method']} do {url}")
+
+            # Sprawdź czy URL jest HTTPS
+            if url.startswith("https://"):
+                return {
+                    "status": 400,
+                    "headers": {},
+                    "content": "Nie można odtworzyć żądań HTTPS ze względu na szyfrowanie połączenia."
+                }
+
+            # Przygotuj sesję HTTP
+            import requests
+            session = requests.Session()
+
+            # Dodaj ciasteczka
+            if request_data.get('cookies'):
+                for name, value in request_data['cookies'].items():
+                    session.cookies.set(name, value)
+
+            # Przygotuj nagłówki
+            headers = {}
+            if request_data.get('headers'):
+                headers = request_data['headers']
+
+                # Usuń nagłówki, które mogą powodować problemy
+                problematic_headers = ['Content-Length', 'Host', 'Connection', 'Accept-Encoding']
+                for header in problematic_headers:
+                    if header in headers:
+                        del headers[header]
+
+            # Przygotuj dane POST
+            data = None
+            if request_data.get('method') == 'POST' and request_data.get('post_data'):
+                data = request_data['post_data']
+
+            # Wykonaj żądanie
+            method = request_data.get('method', 'GET')
+
+            if method == 'GET':
+                response = session.get(url, headers=headers, allow_redirects=False)
+            elif method == 'POST':
+                response = session.post(url, headers=headers, data=data, allow_redirects=False)
+            else:
+                return {
+                    "status": 400,
+                    "headers": {},
+                    "content": f"Nieobsługiwana metoda HTTP: {method}"
+                }
+
+            # Przygotuj odpowiedź
+            response_headers = dict(response.headers)
+
+            return {
+                "status": response.status_code,
+                "headers": response_headers,
+                "content": response.text
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+            return {
+                "status": 500,
+                "headers": {},
+                "content": f"Błąd podczas odtwarzania żądania: {str(e)}"
+            }
+
+    def modify_request_data(self, request_data, modifications):
+        """Modyfikuje dane żądania HTTP przed ich odtworzeniem
+
+        Args:
+            request_data (dict): Oryginalne dane żądania
+            modifications (dict): Modyfikacje do zastosowania (nagłówki, ciasteczka itp.)
+
+        Returns:
+            dict: Zmodyfikowane dane żądania
+        """
+        # Utwórz kopię danych żądania
+        modified_data = dict(request_data)
+
+        # Modyfikuj nagłówki
+        if 'headers' in modifications:
+            if 'headers' not in modified_data:
+                modified_data['headers'] = {}
+
+            for header, value in modifications['headers'].items():
+                if value is None:  # Usuń nagłówek
+                    if header in modified_data['headers']:
+                        del modified_data['headers'][header]
+                else:  # Dodaj lub zmień nagłówek
+                    modified_data['headers'][header] = value
+
+        # Modyfikuj ciasteczka
+        if 'cookies' in modifications:
+            if 'cookies' not in modified_data:
+                modified_data['cookies'] = {}
+
+            for cookie, value in modifications['cookies'].items():
+                if value is None:  # Usuń ciasteczko
+                    if cookie in modified_data['cookies']:
+                        del modified_data['cookies'][cookie]
+                else:  # Dodaj lub zmień ciasteczko
+                    modified_data['cookies'][cookie] = value
+
+        # Modyfikuj metodę HTTP
+        if 'method' in modifications:
+            modified_data['method'] = modifications['method']
+
+        # Modyfikuj dane POST
+        if 'post_data' in modifications:
+            modified_data['post_data'] = modifications['post_data']
+
+        return modified_data
+
+    def merge_sessions(self, filenames):
+        """Łączy dane przechwycone z wielu plików sesji
+
+        Args:
+            filenames (list): Lista ścieżek do plików z zapisanymi sesjami
+
+        Returns:
+            bool: True jeśli łączenie przebiegło pomyślnie, False w przeciwnym wypadku
+        """
+        if not filenames:
+            print("Brak plików do scalenia.")
+            return False
+
+        # Zachowaj kopię oryginalnych danych
+        original_data = self.captured_data.copy() if self.captured_data else {}
+        merged_data = {}
+
+        try:
+            # Przetwórz każdy plik
+            for filename in filenames:
+                if not os.path.isfile(filename):
+                    print(f"Plik {filename} nie istnieje, pomijam.")
+                    continue
+
+                print(f"Wczytywanie danych z pliku: {filename}")
+
+                try:
+                    with open(filename, 'rb') as f:
+                        file_data = pickle.load(f)
+
+                    if not isinstance(file_data, dict):
+                        print(f"Nieprawidłowy format danych w pliku {filename}, pomijam.")
+                        continue
+
+                    # Dodaj dane do połączonych danych
+                    for url, requests in file_data.items():
+                        if url in merged_data:
+                            # Dodaj tylko unikalne żądania (sprawdzanie po timestamp)
+                            existing_timestamps = {req.get('timestamp') for req in merged_data[url]}
+                            for req in requests:
+                                if req.get('timestamp') not in existing_timestamps:
+                                    merged_data[url].append(req)
+                                    existing_timestamps.add(req.get('timestamp'))
+                        else:
+                            merged_data[url] = requests
+
+                    print(f"Pomyślnie dodano dane z pliku {filename}")
+                except Exception as e:
+                    print(f"Błąd podczas wczytywania pliku {filename}: {e}")
+                    continue
+
+            # Jeśli mamy oryginalne dane, dodajmy je do scalonych danych
+            if original_data:
+                for url, requests in original_data.items():
+                    if url in merged_data:
+                        # Dodaj tylko unikalne żądania
+                        existing_timestamps = {req.get('timestamp') for req in merged_data[url]}
+                        for req in requests:
+                            if req.get('timestamp') not in existing_timestamps:
+                                merged_data[url].append(req)
+                                existing_timestamps.add(req.get('timestamp'))
+                    else:
+                        merged_data[url] = requests
+
+            # Sprawdź czy udało się scalić jakieś dane
+            if not merged_data:
+                print("Nie udało się scalić żadnych danych.")
+                return False
+
+            # Przypisz scalone dane
+            self.captured_data = merged_data
+
+            # Wyświetl statystyki
+            url_count = len(self.captured_data)
+            request_count = sum(len(requests) for requests in self.captured_data.values())
+
+            print(f"\nStatystyki scalonych danych:")
+            print(f"- Liczba unikalnych URL: {url_count}")
+            print(f"- Łączna liczba żądań: {request_count}")
+
+            print("\nNajczęściej odwiedzane URL:")
+            urls_by_requests = sorted(
+                [(url, len(reqs)) for url, reqs in self.captured_data.items()],
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            for i, (url, count) in enumerate(urls_by_requests[:10]):
+                print(f"  {i + 1}. {url} - {count} żądań")
+
+            return True
+
+        except Exception as e:
+            print(f"Błąd podczas scalania sesji: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Przywróć oryginalne dane w przypadku błędu
+            self.captured_data = original_data
+            return False
+
+    def analyze_traffic(self):
+        """Analizuje przechwycony ruch sieciowy pod kątem wzorców i potencjalnych problemów bezpieczeństwa
+
+        Returns:
+            dict: Wyniki analizy zawierające różne metryki i wykryte problemy
+        """
+        if not self.captured_data:
+            print("Brak danych do analizy.")
+            return None
+
+        try:
+            results = {
+                "stats": {},
+                "security_issues": [],
+                "performance_issues": [],
+                "interesting_patterns": []
+            }
+
+            # --- Statystyki podstawowe ---
+            url_count = len(self.captured_data)
+            request_count = sum(len(requests) for requests in self.captured_data.values())
+            http_count = sum(len([r for r in reqs if r.get('protocol') == 'HTTP' or not r.get('protocol')])
+                             for reqs in self.captured_data.values())
+            https_count = sum(len([r for r in reqs if r.get('protocol') == 'HTTPS'])
+                              for reqs in self.captured_data.values())
+
+            # Oblicz domeny
+            domains = set()
+            for url in self.captured_data.keys():
+                try:
+                    if '://' in url:
+                        domain = url.split('://', 1)[1].split('/', 1)[0]
+                        domains.add(domain)
+                except:
+                    pass
+
+            results["stats"] = {
+                "url_count": url_count,
+                "request_count": request_count,
+                "http_count": http_count,
+                "https_count": https_count,
+                "domain_count": len(domains),
+                "domains": list(domains)
+            }
+
+            # --- Analiza bezpieczeństwa ---
+
+            # Wykrywanie niezaszyfrowanych HTTP
+            http_urls = [url for url in self.captured_data.keys() if url.startswith('http://')]
+            if http_urls:
+                results["security_issues"].append({
+                    "type": "unencrypted_traffic",
+                    "description": "Wykryto niezaszyfrowany ruch HTTP",
+                    "count": len(http_urls),
+                    "urls": http_urls[:5]  # Pokaż maksymalnie 5 przykładów
+                })
+
+            # Wykrywanie niezaszyfrowanych danych osobowych
+            sensitive_keywords = [
+                'password', 'hasło', 'haslo', 'pass', 'pwd', 'passwd',
+                'email', 'login', 'username', 'użytkownik', 'uzytkownik',
+                'pesel', 'credit', 'card', 'karta', 'cvv', 'cvc'
+            ]
+
+            unsecured_sensitive_data = []
+            for url, requests in self.captured_data.items():
+                if not url.startswith('https://'):
+                    for req in requests:
+                        if req.get('post_data'):
+                            post_data = req.get('post_data').lower()
+                            for keyword in sensitive_keywords:
+                                if keyword in post_data:
+                                    unsecured_sensitive_data.append({
+                                        "url": url,
+                                        "keyword": keyword,
+                                        "timestamp": req.get('timestamp', 'unknown')
+                                    })
+                                    break
+
+            if unsecured_sensitive_data:
+                results["security_issues"].append({
+                    "type": "unsecured_sensitive_data",
+                    "description": "Wykryto niezaszyfrowane dane wrażliwe",
+                    "count": len(unsecured_sensitive_data),
+                    "examples": unsecured_sensitive_data[:5]  # Pokaż maksymalnie 5 przykładów
+                })
+
+            # Wykrywanie podejrzanych ciasteczek bez flagi Secure
+            unsecured_cookies = []
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    cookies = req.get('cookies', {})
+                    for cookie_name, cookie_value in cookies.items():
+                        # Sprawdź czy ciasteczko zawiera potencjalnie wrażliwe informacje
+                        if any(keyword in cookie_name.lower() for keyword in ['sess', 'auth', 'token', 'login', 'id']):
+                            if not url.startswith('https://'):
+                                unsecured_cookies.append({
+                                    "url": url,
+                                    "cookie_name": cookie_name,
+                                    "timestamp": req.get('timestamp', 'unknown')
+                                })
+
+            if unsecured_cookies:
+                results["security_issues"].append({
+                    "type": "unsecured_cookies",
+                    "description": "Wykryto niezabezpieczone ciasteczka sesyjne/autoryzacyjne",
+                    "count": len(unsecured_cookies),
+                    "examples": unsecured_cookies[:5]  # Pokaż maksymalnie 5 przykładów
+                })
+
+            # --- Analiza wydajności ---
+
+            # Znajdź strony z dużą liczbą żądań
+            high_request_urls = []
+            for url, requests in self.captured_data.items():
+                if len(requests) > 20:  # Próg dla zbyt wielu żądań
+                    high_request_urls.append({
+                        "url": url,
+                        "request_count": len(requests)
+                    })
+
+            if high_request_urls:
+                results["performance_issues"].append({
+                    "type": "high_request_count",
+                    "description": "Wykryto strony z dużą liczbą żądań",
+                    "count": len(high_request_urls),
+                    "examples": sorted(high_request_urls, key=lambda x: x["request_count"], reverse=True)[:5]
+                })
+
+            # --- Analiza wzorców ---
+
+            # Wykrywanie powtarzających się żądań do tych samych zasobów
+            repeated_requests = {}
+            for url, requests in self.captured_data.items():
+                # Grupuj żądania według metody i ścieżki
+                request_groups = {}
+                for req in requests:
+                    method = req.get('method', 'GET')
+                    key = f"{method} {url}"
+                    if key not in request_groups:
+                        request_groups[key] = []
+                    request_groups[key].append(req)
+
+                # Sprawdź grupy z wieloma żądaniami
+                for key, group in request_groups.items():
+                    if len(group) > 3:  # Próg dla powtarzających się żądań
+                        repeated_requests[key] = len(group)
+
+            if repeated_requests:
+                top_repeated = sorted(repeated_requests.items(), key=lambda x: x[1], reverse=True)[:5]
+                results["interesting_patterns"].append({
+                    "type": "repeated_requests",
+                    "description": "Wykryto powtarzające się żądania do tych samych zasobów",
+                    "count": len(repeated_requests),
+                    "examples": [{"request": req, "count": count} for req, count in top_repeated]
+                })
+
+            # Generuj raport podsumowujący
+            print("\n==== Raport analizy ruchu sieciowego ====")
+
+            print(f"\nStatystyki podstawowe:")
+            print(f"- Liczba unikalnych URL: {url_count}")
+            print(f"- Łączna liczba żądań: {request_count}")
+            print(f"- Żądania HTTP: {http_count}")
+            print(f"- Żądania HTTPS: {https_count}")
+            print(f"- Liczba domen: {len(domains)}")
+
+            if results["security_issues"]:
+                print("\nWykryte problemy bezpieczeństwa:")
+                for issue in results["security_issues"]:
+                    print(f"- {issue['description']} ({issue['count']} wystąpień)")
+            else:
+                print("\nNie wykryto problemów bezpieczeństwa.")
+
+            if results["performance_issues"]:
+                print("\nWykryte problemy wydajności:")
+                for issue in results["performance_issues"]:
+                    print(f"- {issue['description']} ({issue['count']} wystąpień)")
+            else:
+                print("\nNie wykryto problemów wydajności.")
+
+            if results["interesting_patterns"]:
+                print("\nInteresujące wzorce:")
+                for pattern in results["interesting_patterns"]:
+                    print(f"- {pattern['description']} ({pattern['count']} wystąpień)")
+            else:
+                print("\nNie wykryto interesujących wzorców.")
+
+            return results
+
+        except Exception as e:
+            print(f"Błąd podczas analizy ruchu: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def start_interactive_session_browser(self):
+        """Uruchamia interaktywną przeglądarkę sesji z zaawansowanymi funkcjami odtwarzania"""
+        print("Uruchamianie zaawansowanej interaktywnej przeglądarki sesji na porcie 8000...")
+
+        if not self.captured_data or len(self.captured_data) == 0:
+            print("Błąd: Brak danych do wyświetlenia.")
+            return False
+
+        try:
+            # Utwórz pliki dla aplikacji przeglądarki sesji
+            if not self.create_session_browser_app():
+                print("Nie udało się utworzyć aplikacji przeglądarki sesji.")
+                return False
+
+            # Importy do obsługi proxy
+            import http.server
+            import socketserver
+            import urllib.parse
+            import requests
+
+            # Utwórz klasę obsługującą żądania HTTP z funkcją proxy
+            class InteractiveSessionBrowserHandler(http.server.SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    self.sniffer = kwargs.pop('sniffer', None)
+                    super().__init__(*args, **kwargs)
+
+                def do_GET(self):
+                    if self.path == '/':
+                        self.path = '/session_browser_app.html'
+                    elif self.path == '/data':
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        with open('temp_session_data.json', 'rb') as f:
+                            self.wfile.write(f.read())
+                        return
+                    elif self.path.startswith('/proxy/'):
+                        # Obsługa proxy dla odtwarzania żądań
+                        try:
+                            # Dekoduj URL, do którego ma być wysłane żądanie
+                            encoded_url = self.path[7:]  # usuń '/proxy/'
+                            target_url = urllib.parse.unquote(encoded_url)
+
+                            # Pobierz dane dla tego URL
+                            session_data = {}
+                            with open('temp_session_data.json', 'r') as f:
+                                import json
+                                session_data = json.load(f)
+
+                            if target_url in session_data:
+                                # Użyj pierwszego żądania jako wzorca
+                                request_data = session_data[target_url][0]
+
+                                # Odtwórz żądanie
+                                if self.sniffer:
+                                    response = self.sniffer.replay_request(target_url, request_data)
+
+                                    # Wyślij odpowiedź
+                                    self.send_response(response.get('status', 200))
+
+                                    # Dodaj nagłówki
+                                    for header, value in response.get('headers', {}).items():
+                                        if header.lower() not in ['content-length', 'transfer-encoding']:
+                                            self.send_header(header, value)
+
+                                    self.end_headers()
+
+                                    # Wyślij treść
+                                    self.wfile.write(response.get('content', '').encode('utf-8', errors='ignore'))
+                                else:
+                                    self.send_response(500)
+                                    self.send_header('Content-type', 'text/plain')
+                                    self.end_headers()
+                                    self.wfile.write(b"Blad: Brak dostepu do obiektu sniffer")
+                            else:
+                                self.send_response(404)
+                                self.send_header('Content-type', 'text/plain')
+                                self.end_headers()
+                                self.wfile.write(f"URL {target_url} nie znaleziony w danych sesji".encode())
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+
+                            self.send_response(500)
+                            self.send_header('Content-type', 'text/plain')
+                            self.end_headers()
+                            self.wfile.write(f"Błąd: {str(e)}".encode())
+                        return
+                    elif self.path.startswith('/api/'):
+                        # Obsługa API dla przeglądarki sesji
+                        if self.path == '/api/analyze':
+                            try:
+                                # Przeprowadź analizę i zwróć wyniki
+                                results = self.sniffer.analyze_traffic() if self.sniffer else None
+
+                                self.send_response(200)
+                                self.send_header('Content-type', 'application/json')
+                                self.end_headers()
+
+                                import json
+                                if results:
+                                    self.wfile.write(json.dumps(results).encode())
+                                else:
+                                    self.wfile.write(
+                                        json.dumps({"error": "Nie udało się przeprowadzić analizy"}).encode())
+                            except Exception as e:
+                                self.send_response(500)
+                                self.send_header('Content-type', 'application/json')
+                                self.end_headers()
+                                import json
+                                self.wfile.write(json.dumps({"error": str(e)}).encode())
+                            return
+
+                    return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+                def do_POST(self):
+                    if self.path.startswith('/api/replay'):
+                        content_length = int(self.headers['Content-Length'])
+                        post_data = self.rfile.read(content_length).decode('utf-8')
+
+                        try:
+                            import json
+                            replay_request = json.loads(post_data)
+
+                            url = replay_request.get('url')
+                            request_index = replay_request.get('requestIndex', 0)
+                            modifications = replay_request.get('modifications', {})
+
+                            # Pobierz dane sesji
+                            session_data = {}
+                            with open('temp_session_data.json', 'r') as f:
+                                session_data = json.load(f)
+
+                            if url in session_data and request_index < len(session_data[url]):
+                                # Pobierz dane żądania
+                                request_data = session_data[url][request_index]
+
+                                # Zastosuj modyfikacje jeśli istnieją
+                                if modifications and self.sniffer:
+                                    request_data = self.sniffer.modify_request_data(request_data, modifications)
+
+                                # Odtwórz żądanie
+                                if self.sniffer:
+                                    response = self.sniffer.replay_request(url, request_data)
+
+                                    self.send_response(200)
+                                    self.send_header('Content-type', 'application/json')
+                                    self.end_headers()
+
+                                    self.wfile.write(json.dumps(response).encode())
+                                else:
+                                    self.send_response(500)
+                                    self.send_header('Content-type', 'application/json')
+                                    self.end_headers()
+                                    self.wfile.write(json.dumps({"error": "Brak dostępu do obiektu sniffer"}).encode())
+                            else:
+                                self.send_response(404)
+                                self.send_header('Content-type', 'application/json')
+                                self.end_headers()
+                                self.wfile.write(json.dumps({"error": "Żądanie nie znalezione"}).encode())
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+
+                            self.send_response(500)
+                            self.send_header('Content-type', 'application/json')
+                            self.end_headers()
+                            import json
+                            self.wfile.write(json.dumps({"error": str(e)}).encode())
+                        return
+
+                    self.send_response(404)
+                    self.end_headers()
+
+            # Utwórz handler z referencją do obiektu sniffer
+            handler = lambda *args, **kwargs: InteractiveSessionBrowserHandler(*args, sniffer=self, **kwargs)
+
+            with socketserver.TCPServer(("", 8000), handler) as httpd:
+                print("Serwer interaktywnej przeglądarki uruchomiony na http://localhost:8000")
+                print("Otwórz przeglądarkę i przejdź do adresu: http://localhost:8000")
+                print("Naciśnij Ctrl+C, aby zatrzymać serwer")
+
+                try:
+                    # Otwórz przeglądarkę
+                    try:
+                        import webbrowser
+                        webbrowser.open("http://localhost:8000")
+                    except Exception as e:
+                        print(f"Nie udało się automatycznie otworzyć przeglądarki: {e}")
+
+                    # Uruchom serwer
+                    httpd.serve_forever()
+                except KeyboardInterrupt:
+                    print("\nZatrzymywanie serwera...")
+                except Exception as e:
+                    print(f"\nBłąd podczas działania serwera: {e}")
+                finally:
+                    try:
+                        httpd.shutdown()
+                    except:
+                        pass
+                    # Usuń pliki tymczasowe
+                    for temp_file in ['temp_session_data.json', 'session_browser_app.html']:
+                        try:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                        except Exception as e:
+                            print(f"Nie udało się usunąć pliku {temp_file}: {e}")
+                    print("Serwer zatrzymany.")
+                    return True
+
+        except Exception as e:
+            print(f"Błąd podczas uruchamiania interaktywnej przeglądarki sesji: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def replay_specific_request(self):
+        """Pozwala użytkownikowi wybrać i odtworzyć konkretne żądanie z przechwyconych danych"""
+        if not self.captured_data:
+            print("Brak danych do odtworzenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return False
+
+        try:
+            # Wyświetl listę URL
+            print("\n=== Dostępne URL ===")
+            urls = list(self.captured_data.keys())
+
+            for i, url in enumerate(urls):
+                print(f"{i + 1}. {url} ({len(self.captured_data[url])} żądań)")
+
+            # Wybór URL
+            url_choice = input("\nWybierz URL (numer): ")
             try:
-                # Otwórz przeglądarkę
-                import webbrowser
-                webbrowser.open("http://localhost:8000")
+                url_index = int(url_choice) - 1
+                if url_index < 0 or url_index >= len(urls):
+                    print("Nieprawidłowy numer URL.")
+                    return False
 
-                # Uruchom serwer
-                httpd.serve_forever()
-            except KeyboardInterrupt:
-                print("\nZatrzymywanie serwera...")
-                httpd.shutdown()
-                # Usuń pliki tymczasowe
-                if os.path.exists('temp_session_data.json'):
-                    os.remove('temp_session_data.json')
-                if os.path.exists('session_browser.html'):
-                    os.remove('session_browser.html')
-                print("Serwer zatrzymany.")
+                selected_url = urls[url_index]
+                requests = self.captured_data[selected_url]
 
+                # Wyświetl listę żądań dla wybranego URL
+                print(f"\n=== Żądania dla {selected_url} ===")
+                for i, req in enumerate(requests):
+                    method = req.get('method', 'GET')
+                    timestamp = req.get('timestamp', 'nieznany')
+                    protocol = req.get('protocol', 'HTTP')
+
+                    print(f"{i + 1}. {method} - {timestamp} - {protocol}")
+
+                # Wybór żądania
+                req_choice = input("\nWybierz żądanie (numer): ")
+                try:
+                    req_index = int(req_choice) - 1
+                    if req_index < 0 or req_index >= len(requests):
+                        print("Nieprawidłowy numer żądania.")
+                        return False
+
+                    selected_request = requests[req_index]
+
+                    # Sprawdź czy chcemy modyfikować żądanie
+                    print("\nCzy chcesz zmodyfikować żądanie przed odtworzeniem?")
+                    print("1. Nie, odtwórz oryginalne żądanie")
+                    print("2. Tak, chcę zmodyfikować nagłówki")
+                    print("3. Tak, chcę zmodyfikować ciasteczka")
+                    print("4. Tak, chcę zmodyfikować dane POST")
+
+                    mod_choice = input("\nWybierz opcję: ")
+
+                    modifications = {}
+
+                    if mod_choice == "2":
+                        print("\nModyfikacja nagłówków (format: Nagłówek=Wartość, pusty wiersz kończy)")
+                        headers = {}
+                        while True:
+                            header_line = input().strip()
+                            if not header_line:
+                                break
+
+                            if '=' in header_line:
+                                header, value = header_line.split('=', 1)
+                                headers[header.strip()] = value.strip()
+
+                        if headers:
+                            modifications['headers'] = headers
+
+                    elif mod_choice == "3":
+                        print("\nModyfikacja ciasteczek (format: Ciasteczko=Wartość, pusty wiersz kończy)")
+                        cookies = {}
+                        while True:
+                            cookie_line = input().strip()
+                            if not cookie_line:
+                                break
+
+                            if '=' in cookie_line:
+                                cookie, value = cookie_line.split('=', 1)
+                                cookies[cookie.strip()] = value.strip()
+
+                        if cookies:
+                            modifications['cookies'] = cookies
+
+                    elif mod_choice == "4":
+                        print("\nWprowadź nowe dane POST:")
+                        post_data = input().strip()
+
+                        if post_data:
+                            modifications['post_data'] = post_data
+                            # Upewnij się, że metoda to POST
+                            modifications['method'] = 'POST'
+
+                    # Zastosuj modyfikacje jeśli istnieją
+                    if modifications:
+                        request_data = self.modify_request_data(selected_request, modifications)
+                    else:
+                        request_data = selected_request
+
+                    # Odtwórz żądanie
+                    print(f"\nOdtwarzanie żądania {request_data.get('method', 'GET')} do {selected_url}...")
+                    response = self.replay_request(selected_url, request_data)
+
+                    # Wyświetl wynik
+                    print("\n=== Wynik odtwarzania żądania ===")
+                    print(f"Status: {response.get('status')}")
+                    print("\nNagłówki odpowiedzi:")
+                    for header, value in response.get('headers', {}).items():
+                        print(f"{header}: {value}")
+
+                    print("\nZawartość odpowiedzi:")
+                    content = response.get('content', '')
+                    if len(content) > 1000:
+                        print(content[:1000] + "...\n[Zawartość obcięta]")
+                    else:
+                        print(content)
+
+                    # Zapisz odpowiedź do pliku
+                    save_choice = input("\nCzy chcesz zapisać odpowiedź do pliku? (t/n): ").lower()
+                    if save_choice == 't' or save_choice == 'tak':
+                        filename = input("Podaj nazwę pliku: ").strip()
+                        if filename:
+                            try:
+                                with open(filename, 'w', encoding='utf-8') as f:
+                                    f.write(content)
+                                print(f"Odpowiedź zapisana do pliku: {filename}")
+                            except Exception as e:
+                                print(f"Błąd podczas zapisywania pliku: {e}")
+
+                    return True
+
+                except ValueError:
+                    print("Nieprawidłowy numer żądania. Wprowadź liczbę.")
+                    return False
+
+            except ValueError:
+                print("Nieprawidłowy numer URL. Wprowadź liczbę.")
+                return False
+
+        except Exception as e:
+            print(f"Błąd podczas odtwarzania żądania: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def simulate_browsing_session(self):
+        """Symuluje całą sesję przeglądania odtwarzając sekwencję żądań"""
+        if not self.captured_data:
+            print("Brak danych do symulacji. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return False
+
+        try:
+            # Wyświetl listę URL
+            print("\n=== Dostępne URL ===")
+            urls = list(self.captured_data.keys())
+
+            for i, url in enumerate(urls):
+                print(f"{i + 1}. {url} ({len(self.captured_data[url])} żądań)")
+
+            # Wybór URL
+            url_choice = input("\nWybierz URL początkowy (numer): ")
+            try:
+                url_index = int(url_choice) - 1
+                if url_index < 0 or url_index >= len(urls):
+                    print("Nieprawidłowy numer URL.")
+                    return False
+
+                # Ustal głębokość symulacji
+                print("\nWybierz tryb symulacji:")
+                print("1. Tylko żądania dla wybranego URL (domyślnie)")
+                print("2. Śledź wszystkie powiązane URL (głęboka symulacja)")
+
+                sim_mode = input("\nWybierz tryb (1/2): ").strip() or "1"
+
+                # Wyświetl opcje symulacji
+                print("\nUstawienia symulacji:")
+                print("1. Automatyczne (odtwarza wszystkie żądania w sekwencji)")
+                print("2. Krok po kroku (z potwierdzeniem użytkownika)")
+
+                auto_mode = input("\nWybierz tryb (1/2): ").strip() or "1"
+                is_automatic = (auto_mode == "1")
+
+                # Wyświetl opcje czasowe
+                print("\nOpóźnienie między żądaniami (w sekundach):")
+                delay_input = input("Podaj opóźnienie (domyślnie: 1s): ").strip() or "1"
+
+                try:
+                    delay = float(delay_input)
+                except:
+                    delay = 1.0
+
+                # Przygotuj listę żądań do symulacji
+                session_urls = set()
+                session_requests = []
+
+                # Dodaj pierwszy URL do listy
+                session_urls.add(urls[url_index])
+
+                # Buduj listę żądań
+                current_index = 0
+                max_requests = 100  # Limit bezpieczeństwa
+
+                while current_index < max_requests:
+                    # Sprawdź wszystkie URL w bieżącej sesji
+                    new_urls_found = False
+
+                    for url in list(session_urls):
+                        # Dodaj wszystkie żądania dla tego URL
+                        for req in self.captured_data[url]:
+                            # Utwórz identyfikator żądania
+                            req_id = f"{url}|{req.get('timestamp', '')}|{req.get('method', 'GET')}"
+
+                            # Dodaj jeśli jeszcze nie ma w liście
+                            if req_id not in [r['id'] for r in session_requests]:
+                                session_requests.append({
+                                    'id': req_id,
+                                    'url': url,
+                                    'request': req
+                                })
+                                new_urls_found = True
+
+                    # Jeśli jest tryb głębokiej symulacji, szukaj powiązanych URL
+                    if sim_mode == "2":
+                        for req_data in session_requests:
+                            req = req_data['request']
+
+                            # Szukaj URL w nagłówkach
+                            for header, value in req.get('headers', {}).items():
+                                if header.lower() in ['referer', 'origin'] and value.startswith('http'):
+                                    if value not in session_urls:
+                                        if value in self.captured_data:
+                                            session_urls.add(value)
+                                            new_urls_found = True
+
+                            # Szukaj URL w zawartości POST
+                            if req.get('post_data'):
+                                post_data = req.get('post_data', '').lower()
+                                for url_key in self.captured_data.keys():
+                                    if url_key.lower() in post_data and url_key not in session_urls:
+                                        session_urls.add(url_key)
+                                        new_urls_found = True
+
+                    # Jeśli nie znaleziono nowych URL, zakończ
+                    if not new_urls_found or sim_mode == "1":
+                        break
+
+                    current_index += 1
+                    if current_index >= max_requests:
+                        print(f"Osiągnięto limit {max_requests} żądań. Symulacja może być niekompletna.")
+
+                # Posortuj żądania według timestamp
+                session_requests.sort(key=lambda x: x['request'].get('timestamp', ''))
+
+                # Rozpocznij symulację
+                print(f"\n=== Rozpoczynanie symulacji sesji przeglądania ===")
+                print(f"Liczba URL: {len(session_urls)}")
+                print(f"Liczba żądań: {len(session_requests)}")
+
+                successful_requests = 0
+                failed_requests = 0
+
+                import time
+
+                for i, req_data in enumerate(session_requests):
+                    url = req_data['url']
+                    request = req_data['request']
+
+                    # Wyświetl informacje o żądaniu
+                    print(f"\n[{i + 1}/{len(session_requests)}] {request.get('method', 'GET')} {url}")
+                    print(f"Timestamp: {request.get('timestamp', 'nieznany')}")
+                    print(f"Protokół: {request.get('protocol', 'HTTP')}")
+
+                    # W trybie nieautomatycznym czekaj na potwierdzenie
+                    if not is_automatic:
+                        input("Naciśnij Enter, aby odtworzyć to żądanie...")
+
+                    # Odtwórz żądanie
+                    try:
+                        response = self.replay_request(url, request)
+                        status = response.get('status', 0)
+
+                        if 200 <= status < 400:
+                            print(f"Status: {status} OK")
+                            successful_requests += 1
+                        else:
+                            print(f"Status: {status} BŁĄD")
+                            failed_requests += 1
+
+                            if not is_automatic:
+                                print("\nWystąpił błąd. Czy chcesz kontynuować symulację? (t/n): ")
+                                if input().lower() not in ['t', 'tak']:
+                                    print("Przerwano symulację.")
+                                    break
+                    except Exception as e:
+                        print(f"Błąd: {str(e)}")
+                        failed_requests += 1
+
+                        if not is_automatic:
+                            print("\nWystąpił błąd. Czy chcesz kontynuować symulację? (t/n): ")
+                            if input().lower() not in ['t', 'tak']:
+                                print("Przerwano symulację.")
+                                break
+
+                    # Czekaj określony czas przed następnym żądaniem
+                    if i < len(session_requests) - 1:
+                        time.sleep(delay)
+
+                # Podsumowanie symulacji
+                print(f"\n=== Podsumowanie symulacji ===")
+                print(f"Łączna liczba żądań: {len(session_requests)}")
+                print(f"Udane żądania: {successful_requests}")
+                print(f"Nieudane żądania: {failed_requests}")
+                print(f"Szacunkowy czas trwania sesji: {len(session_requests) * delay:.1f}s")
+
+                return True
+
+            except ValueError:
+                print("Nieprawidłowy numer URL. Wprowadź liczbę.")
+                return False
+
+        except Exception as e:
+            print(f"Błąd podczas symulacji sesji: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def export_as_html(self, filename):
+        """Eksportuje przechwycone dane jako raport HTML
+
+        Args:
+            filename: Nazwa pliku HTML do zapisania
+
+        Returns:
+            bool: True jeśli eksport przebiegł pomyślnie, False w przeciwnym wypadku
+        """
+        if not self.captured_data:
+            print("Brak danych do eksportu. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return False
+
+        try:
+            # Dodaj rozszerzenie .html jeśli nie ma
+            if not filename.lower().endswith('.html'):
+                filename += '.html'
+
+            # Podstawowe statystyki
+            url_count = len(self.captured_data)
+            request_count = sum(len(requests) for requests in self.captured_data.values())
+            http_count = sum(len([r for r in reqs if r.get('protocol') == 'HTTP' or not r.get('protocol')])
+                             for reqs in self.captured_data.values())
+            https_count = sum(len([r for r in reqs if r.get('protocol') == 'HTTPS'])
+                              for reqs in self.captured_data.values())
+
+            # Oblicz domeny
+            domains = set()
+            for url in self.captured_data.keys():
+                try:
+                    if '://' in url:
+                        domain = url.split('://', 1)[1].split('/', 1)[0]
+                        domains.add(domain)
+                except:
+                    pass
+
+            # Przygotuj dane dla wykresu
+            domain_requests = {}
+            for url in self.captured_data.keys():
+                try:
+                    if '://' in url:
+                        domain = url.split('://', 1)[1].split('/', 1)[0]
+                        domain_requests[domain] = domain_requests.get(domain, 0) + len(self.captured_data[url])
+                except:
+                    pass
+
+            # Posortuj domeny według liczby żądań
+            top_domains = sorted(domain_requests.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            # HTML header i style
+            html = f"""<!DOCTYPE html>
+    <html lang="pl">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Raport ruchu sieciowego</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                margin: 0;
+                padding: 20px;
+                color: #333;
+            }}
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+            }}
+            h1, h2, h3 {{
+                color: #2c3e50;
+            }}
+            .stats-card {{
+                background: #f9f9f9;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .stats-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-bottom: 20px;
+            }}
+            .stat-item {{
+                background: white;
+                padding: 15px;
+                border-radius: 6px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                text-align: center;
+            }}
+            .stat-number {{
+                font-size: 24px;
+                font-weight: bold;
+                color: #3498db;
+                margin-bottom: 5px;
+            }}
+            .stat-label {{
+                font-size: 14px;
+                color: #7f8c8d;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 20px;
+            }}
+            th, td {{
+                padding: 12px 15px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }}
+            th {{
+                background-color: #f2f2f2;
+                font-weight: bold;
+            }}
+            tr:hover {{
+                background-color: #f5f5f5;
+            }}
+            .http-badge, .https-badge {{
+                display: inline-block;
+                padding: 3px 8px;
+                border-radius: 3px;
+                font-size: 12px;
+                font-weight: bold;
+                color: white;
+            }}
+            .http-badge {{
+                background-color: #e74c3c;
+            }}
+            .https-badge {{
+                background-color: #27ae60;
+            }}
+            .request-details {{
+                margin-top: 10px;
+                padding: 10px;
+                background: #f9f9f9;
+                border-radius: 4px;
+                display: none;
+            }}
+            .detail-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                cursor: pointer;
+            }}
+            .detail-icon {{
+                font-size: 20px;
+            }}
+            .cookie-table, .header-table {{
+                width: 100%;
+                margin-top: 10px;
+                font-size: 14px;
+            }}
+            .toggle-btn {{
+                background: none;
+                border: none;
+                color: #3498db;
+                cursor: pointer;
+                font-size: 14px;
+            }}
+            .chart-container {{
+                height: 400px;
+                margin-bottom: 30px;
+            }}
+            .footer {{
+                margin-top: 40px;
+                text-align: center;
+                font-size: 14px;
+                color: #7f8c8d;
+                padding-top: 20px;
+                border-top: 1px solid #eee;
+            }}
+        </style>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Raport ruchu sieciowego</h1>
+            <p>Data wygenerowania: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+
+            <div class="stats-card">
+                <h2>Podsumowanie</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number">{url_count}</div>
+                        <div class="stat-label">Unikalne URL</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{request_count}</div>
+                        <div class="stat-label">Łączna liczba żądań</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{len(domains)}</div>
+                        <div class="stat-label">Unikalne domeny</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{http_count}</div>
+                        <div class="stat-label">Żądania HTTP</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{https_count}</div>
+                        <div class="stat-label">Żądania HTTPS</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-card">
+                <h2>Analiza domen</h2>
+                <div class="chart-container">
+                    <canvas id="domainsChart"></canvas>
+                </div>
+
+                <h3>Najczęściej odwiedzane domeny</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Domena</th>
+                            <th>Liczba żądań</th>
+                            <th>Procent całości</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    """
+
+            # Dodaj wiersze dla najczęściej odwiedzanych domen
+            for domain, count in top_domains:
+                percentage = (count / request_count) * 100
+                html += f"""
+                        <tr>
+                            <td>{domain}</td>
+                            <td>{count}</td>
+                            <td>{percentage:.1f}%</td>
+                        </tr>"""
+
+            html += """
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="stats-card">
+                <h2>Szczegóły URL</h2>
+                <p>Kliknij na wiersz, aby zobaczyć szczegóły żądań.</p>
+                <table id="urlTable">
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Protokół</th>
+                            <th>Liczba żądań</th>
+                            <th>Akcje</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    """
+
+            # Dodaj wiersze dla każdego URL
+            for i, (url, requests) in enumerate(self.captured_data.items()):
+                # Określ protokół
+                protocol = "HTTPS" if url.startswith("https://") else "HTTP"
+                protocol_class = "https-badge" if protocol == "HTTPS" else "http-badge"
+
+                html += f"""
+                        <tr data-url="{url}">
+                            <td>{url}</td>
+                            <td><span class="{protocol_class}">{protocol}</span></td>
+                            <td>{len(requests)}</td>
+                            <td><button class="toggle-btn" onclick="toggleDetails({i})">Pokaż szczegóły</button></td>
+                        </tr>
+                        <tr id="details-{i}" style="display:none;">
+                            <td colspan="4">
+                                <div class="request-details">
+                                    <h3>Żądania dla {url}</h3>
+                                    <table class="request-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Czas</th>
+                                                <th>Metoda</th>
+                                                <th>Ciasteczka</th>
+                                                <th>Dane POST</th>
+                                                <th>Akcje</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+    """
+
+                # Dodaj wiersze dla każdego żądania
+                for j, req in enumerate(requests):
+                    method = req.get('method', 'GET')
+                    timestamp = req.get('timestamp', 'nieznany')
+                    cookies = len(req.get('cookies', {}))
+                    has_post = "Tak" if req.get('post_data') else "Nie"
+
+                    html += f"""
+                                            <tr>
+                                                <td>{timestamp}</td>
+                                                <td>{method}</td>
+                                                <td>{cookies}</td>
+                                                <td>{has_post}</td>
+                                                <td><button class="toggle-btn" onclick="toggleRequestDetails({i},{j})">Szczegóły</button></td>
+                                            </tr>
+                                            <tr id="request-details-{i}-{j}" style="display:none;">
+                                                <td colspan="5">
+    """
+
+                    # Dodaj szczegóły żądania
+                    if req.get('headers'):
+                        html += """
+                                                    <h4>Nagłówki</h4>
+                                                    <table class="header-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Nagłówek</th>
+                                                                <th>Wartość</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+    """
+
+                        for header, value in req.get('headers', {}).items():
+                            html += f"""
+                                                            <tr>
+                                                                <td>{header}</td>
+                                                                <td>{value}</td>
+                                                            </tr>"""
+
+                        html += """
+                                                        </tbody>
+                                                    </table>
+    """
+
+                    # Dodaj ciasteczka
+                    if req.get('cookies'):
+                        html += """
+                                                    <h4>Ciasteczka</h4>
+                                                    <table class="cookie-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Nazwa</th>
+                                                                <th>Wartość</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+    """
+
+                        for cookie, value in req.get('cookies', {}).items():
+                            html += f"""
+                                                            <tr>
+                                                                <td>{cookie}</td>
+                                                                <td>{value}</td>
+                                                            </tr>"""
+
+                        html += """
+                                                        </tbody>
+                                                    </table>
+    """
+
+                    # Dodaj dane POST
+                    if req.get('post_data'):
+                        post_data = req.get('post_data', '')
+                        if len(post_data) > 1000:
+                            post_data = post_data[:1000] + "... [obcięto]"
+
+                        html += f"""
+                                                    <h4>Dane POST</h4>
+                                                    <pre>{post_data}</pre>
+    """
+
+                    html += """
+                                                </td>
+                                            </tr>
+    """
+
+                html += """
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+    """
+
+            # Dodaj skrypty JavaScript i zakończ HTML
+            html += """
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="footer">
+                <p>Raport wygenerowany przez NetworkSniffer</p>
+            </div>
+        </div>
+
+        <script>
+            // Funkcja do przełączania widoczności szczegółów URL
+            function toggleDetails(index) {
+                const detailsRow = document.getElementById(`details-${index}`);
+                const isVisible = detailsRow.style.display !== 'none';
+
+                detailsRow.style.display = isVisible ? 'none' : 'table-row';
+
+                // Zmień tekst przycisku
+                const button = event.target;
+                button.textContent = isVisible ? 'Pokaż szczegóły' : 'Ukryj szczegóły';
+            }
+
+            // Funkcja do przełączania widoczności szczegółów żądania
+            function toggleRequestDetails(urlIndex, reqIndex) {
+                const detailsRow = document.getElementById(`request-details-${urlIndex}-${reqIndex}`);
+                const isVisible = detailsRow.style.display !== 'none';
+
+                detailsRow.style.display = isVisible ? 'none' : 'table-row';
+
+                // Zmień tekst przycisku
+                const button = event.target;
+                button.textContent = isVisible ? 'Szczegóły' : 'Ukryj';
+            }
+
+            // Inicjalizacja wykresu domen
+            document.addEventListener('DOMContentLoaded', function() {
+                const ctx = document.getElementById('domainsChart').getContext('2d');
+                const chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ["""
+
+            # Dodaj etykiety dla wykresu
+            for domain, _ in top_domains:
+                html += f"'{domain}',"
+
+            html += """
+                        ],
+                        datasets: [{
+                            label: 'Liczba żądań',
+                            data: ["""
+
+            # Dodaj dane dla wykresu
+            for _, count in top_domains:
+                html += f"{count},"
+
+            html += """
+                            ],
+                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Liczba żądań'
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Domeny'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'Najczęściej odwiedzane domeny'
+                            }
+                        }
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>
+    """
+
+            # Zapisz plik HTML
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(html)
+
+            print(f"Dane zostały wyeksportowane do pliku: {filename}")
+            return True
+
+        except Exception as e:
+            print(f"Błąd podczas eksportowania danych: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def analyze_security_issues(self):
+        """Analizuje przechwycony ruch pod kątem problemów bezpieczeństwa
+
+        Returns:
+            list: Lista wykrytych problemów bezpieczeństwa
+        """
+        if not self.captured_data:
+            print("Brak danych do analizy. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return []
+
+        try:
+            security_issues = []
+
+            print("\n=== Analiza problemów bezpieczeństwa ===")
+
+            # 1. Wykrywanie niezaszyfrowanych HTTP
+            http_urls = [url for url in self.captured_data.keys() if url.startswith('http://')]
+            if http_urls:
+                print(f"\n[!] Wykryto {len(http_urls)} niezaszyfrowanych połączeń HTTP:")
+                for i, url in enumerate(http_urls[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(f"  {i + 1}. {url}")
+
+                if len(http_urls) > 5:
+                    print(f"  ... oraz {len(http_urls) - 5} więcej.")
+
+                security_issues.append({
+                    "type": "unencrypted_traffic",
+                    "severity": "HIGH",
+                    "description": "Wykryto niezaszyfrowany ruch HTTP",
+                    "count": len(http_urls),
+                    "urls": http_urls,
+                    "recommendation": "Przejdź na HTTPS dla wszystkich połączeń, aby zapewnić szyfrowanie danych."
+                })
+
+            # 2. Wykrywanie niezaszyfrowanych danych osobowych
+            sensitive_keywords = [
+                'password', 'hasło', 'haslo', 'pass', 'pwd', 'passwd',
+                'email', 'login', 'username', 'użytkownik', 'uzytkownik',
+                'pesel', 'credit', 'card', 'karta', 'cvv', 'cvc'
+            ]
+
+            unsecured_sensitive_data = []
+            for url, requests in self.captured_data.items():
+                if not url.startswith('https://'):
+                    for req in requests:
+                        if req.get('post_data'):
+                            post_data = req.get('post_data', '').lower()
+                            for keyword in sensitive_keywords:
+                                if keyword in post_data:
+                                    unsecured_sensitive_data.append({
+                                        "url": url,
+                                        "keyword": keyword,
+                                        "timestamp": req.get('timestamp', 'unknown')
+                                    })
+                                    break
+
+            if potential_xss:
+                print(f"\n[!] Wykryto {len(potential_xss)} potencjalnych prób ataków XSS:")
+                for i, xss in enumerate(potential_xss[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(
+                        f"  {i + 1}. {xss['url']} - metoda: {xss['method']}, wykryto: '{xss['signature']}' ({xss['timestamp']})")
+
+                if len(potential_xss) > 5:
+                    print(f"  ... oraz {len(potential_xss) - 5} więcej.")
+
+                security_issues.append({
+                    "type": "potential_xss",
+                    "severity": "HIGH",
+                    "description": "Wykryto potencjalne próby ataków XSS",
+                    "count": len(potential_xss),
+                    "examples": potential_xss,
+                    "recommendation": "Zaimplementuj filtrowanie wejścia i wyjścia dla wszystkich danych użytkownika. Używaj nagłówka Content-Security-Policy."
+                })
+
+            # 5. Wykrywanie potencjalnych ataków SQL Injection
+            sqli_signatures = [
+                "' OR ", "' AND ", "-- ", "/*", "*/", "UNION SELECT", "DROP TABLE",
+                "1=1", "1 = 1", "' OR '1'='1", "' OR 1=1", "OR 1=1", "' --"
+            ]
+
+            potential_sqli = []
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    # Sprawdź dane GET (w URL)
+                    if '?' in url:
+                        query_params = url.split('?', 1)[1]
+                        for sig in sqli_signatures:
+                            if sig.lower() in query_params.lower():
+                                potential_sqli.append({
+                                    "url": url,
+                                    "method": "GET",
+                                    "signature": sig,
+                                    "timestamp": req.get('timestamp', 'unknown')
+                                })
+                                break
+
+                    # Sprawdź dane POST
+                    if req.get('post_data'):
+                        post_data = req.get('post_data', '')
+                        for sig in sqli_signatures:
+                            if sig.lower() in post_data.lower():
+                                potential_sqli.append({
+                                    "url": url,
+                                    "method": "POST",
+                                    "signature": sig,
+                                    "timestamp": req.get('timestamp', 'unknown')
+                                })
+                                break
+
+            if potential_sqli:
+                print(f"\n[!] Wykryto {len(potential_sqli)} potencjalnych prób ataków SQL Injection:")
+                for i, sqli in enumerate(potential_sqli[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(
+                        f"  {i + 1}. {sqli['url']} - metoda: {sqli['method']}, wykryto: '{sqli['signature']}' ({sqli['timestamp']})")
+
+                if len(potential_sqli) > 5:
+                    print(f"  ... oraz {len(potential_sqli) - 5} więcej.")
+
+                security_issues.append({
+                    "type": "potential_sqli",
+                    "severity": "CRITICAL",
+                    "description": "Wykryto potencjalne próby ataków SQL Injection",
+                    "count": len(potential_sqli),
+                    "examples": potential_sqli,
+                    "recommendation": "Używaj parametryzowanych zapytań SQL i ORM. Waliduj wszystkie dane wejściowe."
+                })
+
+            # 6. Wykrywanie brakujących nagłówków bezpieczeństwa
+            security_headers = {
+                'Content-Security-Policy': 0,
+                'X-Content-Type-Options': 0,
+                'X-Frame-Options': 0,
+                'X-XSS-Protection': 0,
+                'Strict-Transport-Security': 0
+            }
+
+            header_checks = 0
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    headers = req.get('headers', {})
+                    header_checks += 1
+
+                    for header in security_headers:
+                        if header in headers:
+                            security_headers[header] += 1
+
+            missing_headers = []
+            if header_checks > 0:
+                for header, count in security_headers.items():
+                    percentage = (count / header_checks) * 100
+                    if percentage < 50:  # Jeśli mniej niż 50% ma ten nagłówek
+                        missing_headers.append({
+                            "header": header,
+                            "present_percentage": percentage
+                        })
+
+            if missing_headers:
+                print(f"\n[!] Wykryto brakujące nagłówki bezpieczeństwa:")
+                for i, header in enumerate(missing_headers):
+                    print(f"  {i + 1}. {header['header']} - obecny tylko w {header['present_percentage']:.1f}% żądań")
+
+                security_issues.append({
+                    "type": "missing_security_headers",
+                    "severity": "MEDIUM",
+                    "description": "Wykryto brakujące nagłówki bezpieczeństwa",
+                    "count": len(missing_headers),
+                    "headers": missing_headers,
+                    "recommendation": "Dodaj standardowe nagłówki bezpieczeństwa do odpowiedzi HTTP."
+                })
+
+            # 7. Podsumowanie
+            if security_issues:
+                print(f"\n=== Podsumowanie problemów bezpieczeństwa ===")
+                print(f"Wykryto łącznie {len(security_issues)} kategorii problemów:")
+
+                severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+                for issue in security_issues:
+                    severity_counts[issue["severity"]] += 1
+
+                for severity, count in severity_counts.items():
+                    if count > 0:
+                        print(f"- {severity}: {count}")
+            else:
+                print("\nNie wykryto żadnych problemów bezpieczeństwa w analizowanych danych.")
+
+            return security_issues
+
+        except Exception as e:
+            print(f"Błąd podczas analizy problemów bezpieczeństwa: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+            if unsecured_sensitive_data:
+                print(
+                    f"\n[!] Wykryto {len(unsecured_sensitive_data)} przypadków przesyłania danych wrażliwych przez niezaszyfrowane połączenia:")
+                for i, data in enumerate(unsecured_sensitive_data[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(
+                        f"  {i + 1}. {data['url']} - wykryto słowo kluczowe: '{data['keyword']}' ({data['timestamp']})")
+
+                if len(unsecured_sensitive_data) > 5:
+                    print(f"  ... oraz {len(unsecured_sensitive_data) - 5} więcej.")
+
+                security_issues.append({
+                    "type": "unsecured_sensitive_data",
+                    "severity": "CRITICAL",
+                    "description": "Wykryto przesyłanie danych wrażliwych przez niezaszyfrowane połączenia",
+                    "count": len(unsecured_sensitive_data),
+                    "examples": unsecured_sensitive_data,
+                    "recommendation": "Natychmiast przejdź na HTTPS dla wszystkich formularzy zawierających dane wrażliwe."
+                })
+
+            # 3. Wykrywanie podejrzanych ciasteczek bez flagi Secure
+            unsecured_cookies = []
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    cookies = req.get('cookies', {})
+                    for cookie_name, cookie_value in cookies.items():
+                        # Sprawdź czy ciasteczko zawiera potencjalnie wrażliwe informacje
+                        if any(keyword in cookie_name.lower() for keyword in ['sess', 'auth', 'token', 'login', 'id']):
+                            if not url.startswith('https://'):
+                                unsecured_cookies.append({
+                                    "url": url,
+                                    "cookie_name": cookie_name,
+                                    "timestamp": req.get('timestamp', 'unknown')
+                                })
+
+            if unsecured_cookies:
+                print(
+                    f"\n[!] Wykryto {len(unsecured_cookies)} niezabezpieczonych ciasteczek sesyjnych/autoryzacyjnych:")
+                for i, cookie in enumerate(unsecured_cookies[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(f"  {i + 1}. {cookie['url']} - ciasteczko: '{cookie['cookie_name']}' ({cookie['timestamp']})")
+
+                if len(unsecured_cookies) > 5:
+                    print(f"  ... oraz {len(unsecured_cookies) - 5} więcej.")
+
+                security_issues.append({
+                    "type": "unsecured_cookies",
+                    "severity": "HIGH",
+                    "description": "Wykryto niezabezpieczone ciasteczka sesyjne/autoryzacyjne",
+                    "count": len(unsecured_cookies),
+                    "examples": unsecured_cookies,
+                    "recommendation": "Dodaj flagi Secure i HttpOnly do wszystkich ciasteczek sesyjnych i autoryzacyjnych."
+                })
+
+            # 4. Wykrywanie potencjalnych ataków XSS
+            xss_signatures = [
+                '<script>', 'javascript:', 'onerror=', 'onload=', 'eval(', 'document.cookie',
+                'alert(', 'prompt(', 'confirm(', 'document.location'
+            ]
+
+            potential_xss = []
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    # Sprawdź dane GET (w URL)
+                    if '?' in url:
+                        query_params = url.split('?', 1)[1]
+                        for sig in xss_signatures:
+                            if sig.lower() in query_params.lower():
+                                potential_xss.append({
+                                    "url": url,
+                                    "method": "GET",
+                                    "signature": sig,
+                                    "timestamp": req.get('timestamp', 'unknown')
+                                })
+                                break
+
+                    # Sprawdź dane POST
+                    if req.get('post_data'):
+                        post_data = req.get('post_data', '')
+                        for sig in xss_signatures:
+                            if sig.lower() in post_data.lower():
+                                potential_xss.append({
+                                    "url": url,
+                                    "method": "POST",
+                                    "signature": sig,
+                                    "timestamp": req.get('timestamp', 'unknown')
+                                })
+                                break
+
+    def analyze_performance_issues(self):
+        """Analizuje przechwycony ruch pod kątem problemów wydajności
+
+        Returns:
+            list: Lista wykrytych problemów wydajności
+        """
+        if not self.captured_data:
+            print("Brak danych do analizy. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return []
+
+        try:
+            performance_issues = []
+
+            print("\n=== Analiza problemów wydajności ===")
+
+            # 1. Wykrywanie stron z dużą liczbą żądań
+            high_request_urls = []
+            for url, requests in self.captured_data.items():
+                if len(requests) > 20:  # Próg dla zbyt wielu żądań
+                    domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
+                    high_request_urls.append({
+                        "url": url,
+                        "domain": domain,
+                        "request_count": len(requests)
+                    })
+
+            if high_request_urls:
+                # Posortuj według liczby żądań (malejąco)
+                high_request_urls.sort(key=lambda x: x["request_count"], reverse=True)
+
+                print(f"\n[!] Wykryto {len(high_request_urls)} stron z dużą liczbą żądań:")
+                for i, url_data in enumerate(high_request_urls[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(f"  {i + 1}. {url_data['url']} - liczba żądań: {url_data['request_count']}")
+
+                if len(high_request_urls) > 5:
+                    print(f"  ... oraz {len(high_request_urls) - 5} więcej.")
+
+                performance_issues.append({
+                    "type": "high_request_count",
+                    "severity": "MEDIUM",
+                    "description": "Wykryto strony z dużą liczbą żądań",
+                    "count": len(high_request_urls),
+                    "examples": high_request_urls,
+                    "recommendation": "Rozważ łączenie zasobów (CSS, JavaScript) oraz użycie technik lazy loading dla obrazów."
+                })
+
+            # 2. Wykrywanie zbyt dużych odpowiedzi
+            large_responses = []
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    if 'response_size' in req and req['response_size'] > 1000000:  # Większe niż 1MB
+                        large_responses.append({
+                            "url": url,
+                            "method": req.get('method', 'GET'),
+                            "size": req['response_size'],
+                            "timestamp": req.get('timestamp', 'unknown')
+                        })
+
+            if large_responses:
+                # Posortuj według rozmiaru (malejąco)
+                large_responses.sort(key=lambda x: x["size"], reverse=True)
+
+                print(f"\n[!] Wykryto {len(large_responses)} odpowiedzi o dużym rozmiarze (>1MB):")
+                for i, resp in enumerate(large_responses[:5]):  # Pokaż maksymalnie 5 przykładów
+                    size_mb = resp['size'] / 1000000
+                    print(f"  {i + 1}. {resp['url']} - rozmiar: {size_mb:.2f} MB ({resp['timestamp']})")
+
+                if len(large_responses) > 5:
+                    print(f"  ... oraz {len(large_responses) - 5} więcej.")
+
+                performance_issues.append({
+                    "type": "large_responses",
+                    "severity": "MEDIUM",
+                    "description": "Wykryto odpowiedzi o dużym rozmiarze",
+                    "count": len(large_responses),
+                    "examples": large_responses,
+                    "recommendation": "Wprowadź kompresję, optymalizację obrazów i paginację dla dużych zestawów danych."
+                })
+
+            # 3. Wykrywanie powtarzających się żądań do tych samych zasobów
+            repeated_requests = {}
+            for url, requests in self.captured_data.items():
+                # Grupuj żądania według metody i ścieżki
+                request_groups = {}
+                for req in requests:
+                    method = req.get('method', 'GET')
+                    timestamp = req.get('timestamp', '')
+
+                    # Ignoruj żądania bez timestamp (nie możemy określić czy były blisko siebie)
+                    if not timestamp:
+                        continue
+
+                    key = f"{method} {url}"
+                    if key not in request_groups:
+                        request_groups[key] = []
+                    request_groups[key].append(timestamp)
+
+                # Sprawdź grupy z wieloma żądaniami
+                for key, timestamps in request_groups.items():
+                    if len(timestamps) > 3:  # Próg dla powtarzających się żądań
+                        repeated_requests[key] = len(timestamps)
+
+            if repeated_requests:
+                # Posortuj według liczby powtórzeń (malejąco)
+                top_repeated = sorted(repeated_requests.items(), key=lambda x: x[1], reverse=True)
+
+                print(f"\n[!] Wykryto {len(repeated_requests)} powtarzających się żądań do tych samych zasobów:")
+                for i, (req, count) in enumerate(top_repeated[:5]):  # Pokaż maksymalnie 5 przykładów
+                    print(f"  {i + 1}. {req} - liczba powtórzeń: {count}")
+
+                if len(repeated_requests) > 5:
+                    print(f"  ... oraz {len(repeated_requests) - 5} więcej.")
+
+                performance_issues.append({
+                    "type": "repeated_requests",
+                    "severity": "HIGH",
+                    "description": "Wykryto powtarzające się żądania do tych samych zasobów",
+                    "count": len(repeated_requests),
+                    "examples": [{"request": req, "count": count} for req, count in top_repeated[:10]],
+                    "recommendation": "Zaimplementuj buforowanie po stronie klienta oraz unikaj niepotrzebnego odświeżania strony."
+                })
+
+            # 4. Wykrywanie nieefektywnych wzorców API
+            api_patterns = {}
+            for url, requests in self.captured_data.items():
+                # Sprawdź czy to jest URL API
+                if '/api/' in url or '/rest/' in url or '/v1/' in url or '/v2/' in url:
+                    for req in requests:
+                        method = req.get('method', 'GET')
+                        key = f"{method} {url}"
+                        if key not in api_patterns:
+                            api_patterns[key] = 0
+                        api_patterns[key] += 1
+
+            inefficient_api = []
+            for pattern, count in api_patterns.items():
+                # Szukaj wzorców wskazujących na nieefektywne API
+                if count > 10:  # Zbyt wiele żądań do tego samego endpointu
+                    inefficient_api.append({
+                        "pattern": pattern,
+                        "count": count,
+                        "issue": "high_frequency"
+                    })
+                elif 'GET' in pattern and count > 5:
+                    # Sprawdź czy to może być N+1 zapytanie (wiele GETów do podobnych endpointów)
+                    base_url = pattern.split('?')[0] if '?' in pattern else pattern
+                    similar_patterns = [p for p in api_patterns if p.startswith(
+                        base_url.split(' ')[0] + ' ' + base_url.split(' ')[1].rsplit('/', 1)[0])]
+                    if len(similar_patterns) > 3:
+                        inefficient_api.append({
+                            "pattern": pattern,
+                            "count": count,
+                            "similar_patterns_count": len(similar_patterns),
+                            "issue": "n_plus_1"
+                        })
+
+            if inefficient_api:
+                print(f"\n[!] Wykryto {len(inefficient_api)} potencjalnie nieefektywnych wzorców API:")
+                for i, api in enumerate(inefficient_api[:5]):  # Pokaż maksymalnie 5 przykładów
+                    issue_type = "zbyt częste wywołania" if api[
+                                                                'issue'] == "high_frequency" else "prawdopodobny problem N+1"
+                    print(f"  {i + 1}. {api['pattern']} - {issue_type} (liczba żądań: {api['count']})")
+
+                if len(inefficient_api) > 5:
+                    print(f"  ... oraz {len(inefficient_api) - 5} więcej.")
+
+                performance_issues.append({
+                    "type": "inefficient_api_patterns",
+                    "severity": "HIGH",
+                    "description": "Wykryto nieefektywne wzorce API",
+                    "count": len(inefficient_api),
+                    "examples": inefficient_api,
+                    "recommendation": "Zoptymalizuj API, użyj GraphQL lub zaimplementuj batch API dla redukcji liczby żądań."
+                })
+
+            # 5. Wykrywanie zasobów bez cache'owania
+            nocache_resources = []
+            cache_headers = ['cache-control', 'expires', 'etag', 'last-modified']
+
+            for url, requests in self.captured_data.items():
+                # Sprawdź statyczne zasoby, które powinny być cache'owane
+                if any(ext in url.lower() for ext in
+                       ['.js', '.css', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.woff', '.woff2']):
+                    for req in requests:
+                        headers = {k.lower(): v for k, v in req.get('headers', {}).items()}
+
+                        # Sprawdź brak nagłówków cache lub nagłówek no-cache
+                        has_cache_headers = any(h in headers for h in cache_headers)
+                        has_nocache = 'cache-control' in headers and (
+                                    'no-cache' in headers['cache-control'].lower() or 'no-store' in headers[
+                                'cache-control'].lower())
+
+                        if not has_cache_headers or has_nocache:
+                            nocache_resources.append({
+                                "url": url,
+                                "cache_headers_present": has_cache_headers,
+                                "has_nocache_directive": has_nocache
+                            })
+                            break  # Jeden przykład na URL wystarczy
+
+            if nocache_resources:
+                print(f"\n[!] Wykryto {len(nocache_resources)} zasobów statycznych bez odpowiedniego cache'owania:")
+                for i, resource in enumerate(nocache_resources[:5]):  # Pokaż maksymalnie 5 przykładów
+                    issue = "brak nagłówków cache" if not resource['cache_headers_present'] else "dyrektywa no-cache"
+                    print(f"  {i + 1}. {resource['url']} - {issue}")
+
+                if len(nocache_resources) > 5:
+                    print(f"  ... oraz {len(nocache_resources) - 5} więcej.")
+
+                performance_issues.append({
+                    "type": "missing_cache",
+                    "severity": "MEDIUM",
+                    "description": "Wykryto zasoby statyczne bez odpowiedniego cache'owania",
+                    "count": len(nocache_resources),
+                    "examples": nocache_resources,
+                    "recommendation": "Dodaj odpowiednie nagłówki cache dla statycznych zasobów, użyj długich TTL dla niezmiennych zasobów."
+                })
+
+            # 6. Podsumowanie
+            if performance_issues:
+                print(f"\n=== Podsumowanie problemów wydajności ===")
+                print(f"Wykryto łącznie {len(performance_issues)} kategorii problemów:")
+
+                severity_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+                for issue in performance_issues:
+                    severity_counts[issue["severity"]] += 1
+
+                for severity, count in severity_counts.items():
+                    if count > 0:
+                        print(f"- {severity}: {count}")
+            else:
+                print("\nNie wykryto żadnych problemów wydajności w analizowanych danych.")
+
+            return performance_issues
+
+        except Exception as e:
+            print(f"Błąd podczas analizy problemów wydajności: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def show_browser_menu(self):
+        """Wyświetla menu przeglądarki sesji"""
+        while True:
+            print("\nPrzeglądarka sesji:")
+            print("1. Uruchom standardową przeglądarkę sesji")
+            print("2. Uruchom interaktywną przeglądarkę sesji")
+            print("3. Odtwórz konkretne żądanie")
+            print("4. Symuluj całą sesję przeglądania")
+            print("0. Powrót do menu głównego")
+
+            try:
+                choice = input("\nWybierz opcję: ").strip()
+            except (UnicodeDecodeError, KeyboardInterrupt):
+                print("\nNieprawidłowe wejście. Spróbuj ponownie.")
+                continue
+
+            if choice == "1":
+                if self.captured_data:
+                    self.start_session_browser()
+                else:
+                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            elif choice == "2":
+                if self.captured_data:
+                    self.start_interactive_session_browser()
+                else:
+                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            elif choice == "3":
+                if self.captured_data:
+                    self.replay_specific_request()
+                else:
+                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            elif choice == "4":
+                if self.captured_data:
+                    self.simulate_browsing_session()
+                else:
+                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            elif choice == "0":
+                break
+            else:
+                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 4.")
+
+    def show_data_management_menu(self):
+        """Wyświetla menu zarządzania danymi"""
+        while True:
+            print("\nZarządzanie danymi:")
+            print("1. Zapisz przechwycone dane")
+            print("2. Wczytaj dane z pliku")
+            print("3. Połącz dane z wielu plików")
+            print("4. Wyczyść bieżące dane")
+            print("5. Eksportuj dane jako HTML")
+            print("0. Powrót do menu głównego")
+
+            try:
+                choice = input("\nWybierz opcję: ").strip()
+            except (UnicodeDecodeError, KeyboardInterrupt):
+                print("\nNieprawidłowe wejście. Spróbuj ponownie.")
+                continue
+
+            if choice == "1":
+                self.save_captured_data()
+            elif choice == "2":
+                try:
+                    filename = input("Podaj nazwę pliku: ").strip()
+                    if filename:
+                        self.load_captured_data(filename)
+                    else:
+                        print("Nie podano nazwy pliku.")
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Operacja anulowana.")
+            elif choice == "3":
+                try:
+                    filenames_input = input("Podaj nazwy plików (oddzielone przecinkiem): ").strip()
+                    if filenames_input:
+                        filenames = [f.strip() for f in filenames_input.split(',')]
+                        self.merge_sessions(filenames)
+                    else:
+                        print("Nie podano nazw plików.")
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Operacja anulowana.")
+            elif choice == "4":
+                try:
+                    confirm = input("Czy na pewno chcesz wyczyścić wszystkie dane? (t/n): ").strip().lower()
+                    if confirm == 't' or confirm == 'tak':
+                        self.captured_data = {}
+                        print("Dane zostały wyczyszczone.")
+                    else:
+                        print("Operacja anulowana.")
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Operacja anulowana.")
+            elif choice == "5":
+                try:
+                    filename = input("Podaj nazwę pliku HTML: ").strip()
+                    if filename:
+                        self.export_as_html(filename)
+                    else:
+                        print("Nie podano nazwy pliku.")
+                except (UnicodeDecodeError, KeyboardInterrupt):
+                    print("\nNieprawidłowe wejście. Operacja anulowana.")
+            elif choice == "0":
+                break
+            else:
+                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 5.")
+
+    def show_analysis_menu(self):
+        """Wyświetla menu analizy ruchu"""
+        while True:
+            print("\nAnaliza ruchu:")
+            print("1. Przeprowadź pełną analizę ruchu")
+            print("2. Znajdź problemy bezpieczeństwa")
+            print("3. Znajdź problemy wydajności")
+            print("4. Analizuj wzorce ruchu")
+            print("5. Generuj raport analizy")
+            print("0. Powrót do menu głównego")
+
+            try:
+                choice = input("\nWybierz opcję: ").strip()
+            except (UnicodeDecodeError, KeyboardInterrupt):
+                print("\nNieprawidłowe wejście. Spróbuj ponownie.")
+                continue
+
+            if choice == "1":
+                if self.captured_data:
+                    self.analyze_traffic()
+                else:
+                    print("Brak danych do analizy.")
+            elif choice == "2":
+                if self.captured_data:
+                    self.analyze_security_issues()
+                else:
+                    print("Brak danych do analizy.")
+            elif choice == "3":
+                if self.captured_data:
+                    self.analyze_performance_issues()
+                else:
+                    print("Brak danych do analizy.")
+            elif choice == "4":
+                if self.captured_data:
+                    self.analyze_traffic_patterns()
+                else:
+                    print("Brak danych do analizy.")
+            elif choice == "5":
+                if self.captured_data:
+                    filename = input("Podaj nazwę pliku raportu: ").strip()
+                    if filename:
+                        self.generate_analysis_report(filename)
+                    else:
+                        print("Nie podano nazwy pliku.")
+                else:
+                    print("Brak danych do analizy.")
+            elif choice == "0":
+                break
+            else:
+                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 5.")
+
+    def _generate_security_issues_html(self, security_issues):
+        """Generuje HTML dla sekcji problemów bezpieczeństwa
+
+        Args:
+            security_issues: Lista wykrytych problemów bezpieczeństwa
+
+        Returns:
+            str: Kod HTML dla sekcji problemów bezpieczeństwa
+        """
+        if not security_issues:
+            return '<p>Nie wykryto problemów bezpieczeństwa w analizowanych danych.</p>'
+
+        html = '<table>\n'
+        html += '    <thead>\n'
+        html += '        <tr>\n'
+        html += '            <th>Problem</th>\n'
+        html += '            <th>Liczba wystąpień</th>\n'
+        html += '            <th>Ważność</th>\n'
+        html += '        </tr>\n'
+        html += '    </thead>\n'
+        html += '    <tbody>\n'
+
+        # Posortuj problemy według ważności
+        severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        sorted_issues = sorted(security_issues, key=lambda x: severity_order.get(x.get("severity", "LOW"), 4))
+
+        for i, issue in enumerate(sorted_issues):
+            severity = issue.get("severity", "MEDIUM")
+            severity_class = f"severity-{severity.lower()}"
+
+            html += f'        <tr>\n'
+            html += f'            <td>{issue.get("description", "Nieznany problem")}</td>\n'
+            html += f'            <td>{issue.get("count", 0)}</td>\n'
+            html += f'            <td><span class="severity {severity_class}">{severity}</span></td>\n'
+            html += f'        </tr>\n'
+            html += f'        <tr>\n'
+            html += f'            <td colspan="3">\n'
+            html += f'                <div class="issue-details">\n'
+
+            # Dodaj przykłady
+            if "examples" in issue and issue["examples"]:
+                html += f'                    <h4>Przykłady</h4>\n'
+                html += f'                    <ul>\n'
+
+                for j, example in enumerate(issue["examples"][:5]):  # Pokaż maksymalnie 5 przykładów
+                    if isinstance(example, dict):
+                        if "url" in example:
+                            html += f'                        <li>{example["url"]}'
+                            if "timestamp" in example:
+                                html += f' ({example["timestamp"]})'
+                            if "keyword" in example:
+                                html += f' - wykryto słowo kluczowe: \'{example["keyword"]}\''
+                            if "cookie_name" in example:
+                                html += f' - ciasteczko: \'{example["cookie_name"]}\''
+                            if "signature" in example:
+                                html += f' - sygnatura: \'{example["signature"]}\''
+                            html += '</li>\n'
+                        elif "header" in example:
+                            html += f'                        <li>Nagłówek {example["header"]} - obecny tylko w {example.get("present_percentage", 0):.1f}% żądań</li>\n'
+                        elif "request" in example:
+                            html += f'                        <li>{example["request"]} - liczba wystąpień: {example.get("count", 0)}</li>\n'
+                    else:
+                        html += f'                        <li>{example}</li>\n'
+
+                if len(issue["examples"]) > 5:
+                    html += f'                        <li>... oraz {len(issue["examples"]) - 5} więcej.</li>\n'
+
+                html += f'                    </ul>\n'
+
+            # Dodaj zalecenie
+            if "recommendation" in issue:
+                html += f'                    <div class="recommendation">\n'
+                html += f'                        <strong>Zalecenie:</strong> {issue["recommendation"]}\n'
+                html += f'                    </div>\n'
+
+            html += f'                </div>\n'
+            html += f'            </td>\n'
+            html += f'        </tr>\n'
+
+        html += '    </tbody>\n'
+        html += '</table>\n'
+
+        return html
+
+    def _generate_performance_issues_html(self, performance_issues):
+        """Generuje HTML dla sekcji problemów wydajności
+
+        Args:
+            performance_issues: Lista wykrytych problemów wydajności
+
+        Returns:
+            str: Kod HTML dla sekcji problemów wydajności
+        """
+        if not performance_issues:
+            return '<p>Nie wykryto problemów wydajności w analizowanych danych.</p>'
+
+        html = '<table>\n'
+        html += '    <thead>\n'
+        html += '        <tr>\n'
+        html += '            <th>Problem</th>\n'
+        html += '            <th>Liczba wystąpień</th>\n'
+        html += '            <th>Ważność</th>\n'
+        html += '        </tr>\n'
+        html += '    </thead>\n'
+        html += '    <tbody>\n'
+
+        # Posortuj problemy według ważności
+        severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+        sorted_issues = sorted(performance_issues, key=lambda x: severity_order.get(x.get("severity", "LOW"), 3))
+
+        for i, issue in enumerate(sorted_issues):
+            severity = issue.get("severity", "MEDIUM")
+            severity_class = f"severity-{severity.lower()}"
+
+            html += f'        <tr>\n'
+            html += f'            <td>{issue.get("description", "Nieznany problem")}</td>\n'
+            html += f'            <td>{issue.get("count", 0)}</td>\n'
+            html += f'            <td><span class="severity {severity_class}">{severity}</span></td>\n'
+            html += f'        </tr>\n'
+            html += f'        <tr>\n'
+            html += f'            <td colspan="3">\n'
+            html += f'                <div class="issue-details">\n'
+
+            # Dodaj przykłady
+            if "examples" in issue and issue["examples"]:
+                html += f'                    <h4>Przykłady</h4>\n'
+                html += f'                    <ul>\n'
+
+                for j, example in enumerate(issue["examples"][:5]):  # Pokaż maksymalnie 5 przykładów
+                    if isinstance(example, dict):
+                        if "url" in example:
+                            html += f'                        <li>{example["url"]}'
+                            if "request_count" in example:
+                                html += f' - liczba żądań: {example["request_count"]}'
+                            if "size" in example:
+                                size_mb = example["size"] / 1000000
+                                html += f' - rozmiar: {size_mb:.2f} MB'
+                            html += '</li>\n'
+                        elif "pattern" in example:
+                            html += f'                        <li>{example["pattern"]} - '
+                            if example.get("issue") == "high_frequency":
+                                html += f'zbyt częste wywołania (liczba żądań: {example.get("count", 0)})'
+                            elif example.get("issue") == "n_plus_1":
+                                html += f'prawdopodobny problem N+1 (podobnych wzorców: {example.get("similar_patterns_count", 0)})'
+                            html += '</li>\n'
+                        elif "request" in example:
+                            html += f'                        <li>{example["request"]} - liczba powtórzeń: {example.get("count", 0)}</li>\n'
+                    else:
+                        html += f'                        <li>{example}</li>\n'
+
+                if len(issue["examples"]) > 5:
+                    html += f'                        <li>... oraz {len(issue["examples"]) - 5} więcej.</li>\n'
+
+                html += f'                    </ul>\n'
+
+            # Dodaj zalecenie
+            if "recommendation" in issue:
+                html += f'                    <div class="recommendation">\n'
+                html += f'                        <strong>Zalecenie:</strong> {issue["recommendation"]}\n'
+                html += f'                    </div>\n'
+
+            html += f'                </div>\n'
+            html += f'            </td>\n'
+            html += f'        </tr>\n'
+
+        html += '    </tbody>\n'
+        html += '</table>\n'
+
+        return html
+
+    def analyze_traffic_patterns(self):
+        """Analizuje wzorce ruchu sieciowego, szukając powtarzających się schematów
+
+        Returns:
+            list: Wykryte wzorce ruchu
+        """
+        if not self.captured_data:
+            print("Brak danych do analizy. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return []
+
+        try:
+            patterns = []
+
+            print("\n=== Analiza wzorców ruchu sieciowego ===")
+
+            # 1. Wykrywanie sekwencji żądań
+            print("\nSzukanie sekwencji żądań...")
+
+            # Utwórz chronologicznie posortowaną listę żądań
+            all_requests = []
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    timestamp = req.get('timestamp', '')
+                    if timestamp:  # Tylko jeśli mamy timestamp
+                        all_requests.append({
+                            'url': url,
+                            'timestamp': timestamp,
+                            'method': req.get('method', 'GET'),
+                            'req_data': req
+                        })
+
+            # Sortowanie chronologiczne
+            if all_requests:
+                try:
+                    # Próba konwersji timestamp do formatu datetime jeśli to string
+                    from datetime import datetime
+
+                    def parse_timestamp(ts):
+                        if isinstance(ts, datetime):
+                            return ts
+                        try:
+                            return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                        except:
+                            try:
+                                return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f")
+                            except:
+                                return datetime.min
+
+                    all_requests.sort(key=lambda x: parse_timestamp(x['timestamp']))
+                except:
+                    # Fallback na string sorting jeśli konwersja się nie powiedzie
+                    all_requests.sort(key=lambda x: str(x['timestamp']))
+
+            # Zidentyfikuj powtarzające się sekwencje
+            sequence_length = 3  # Minimalna długość sekwencji do wykrycia
+            max_sequences = 10  # Maksymalna liczba sekwencji do zwrócenia
+
+            found_sequences = []
+
+            # Funkcja do generowania "odcisku palca" żądania (bez timestamp)
+            def request_fingerprint(req):
+                return f"{req['method']}|{req['url']}"
+
+            # Sprawdź sekwencje o różnej długości
+            for seq_len in range(sequence_length,
+                                 min(10, len(all_requests) // 2)):  # Max 10 lub połowa wszystkich żądań
+                for i in range(len(all_requests) - seq_len * 2 + 1):
+                    # Utwórz odcisk palca sekwencji
+                    seq_fingerprint = [request_fingerprint(all_requests[i + j]) for j in range(seq_len)]
+
+                    # Szukaj tej samej sekwencji później
+                    for j in range(i + seq_len, len(all_requests) - seq_len + 1):
+                        match_fingerprint = [request_fingerprint(all_requests[j + k]) for k in range(seq_len)]
+
+                        if seq_fingerprint == match_fingerprint:
+                            # Znaleziono powtarzającą się sekwencję
+                            seq_urls = [all_requests[i + k]['url'] for k in range(seq_len)]
+
+                            # Sprawdź czy już nie mamy tej sekwencji
+                            if not any(set(seq_urls) == set(s['urls']) for s in found_sequences):
+                                found_sequences.append({
+                                    'urls': seq_urls,
+                                    'length': seq_len,
+                                    'first_occurrence': all_requests[i]['timestamp'],
+                                    'second_occurrence': all_requests[j]['timestamp']
+                                })
+
+                                # Jeśli mamy wystarczająco dużo sekwencji, zakończ
+                                if len(found_sequences) >= max_sequences:
+                                    break
+
+                    if len(found_sequences) >= max_sequences:
+                        break
+
+                if len(found_sequences) >= max_sequences:
+                    break
+
+            if found_sequences:
+                print(f"\n[+] Wykryto {len(found_sequences)} powtarzających się sekwencji żądań:")
+                for i, seq in enumerate(found_sequences):
+                    print(f"\nSekwencja #{i + 1} (długość: {seq['length']})")
+                    print(f"Pierwsze wystąpienie: {seq['first_occurrence']}")
+                    print(f"Drugie wystąpienie: {seq['second_occurrence']}")
+                    print("URL w sekwencji:")
+                    for j, url in enumerate(seq['urls']):
+                        print(f"  {j + 1}. {url}")
+
+                patterns.append({
+                    'type': 'repeated_sequences',
+                    'description': 'Powtarzające się sekwencje żądań',
+                    'sequences': found_sequences
+                })
+            else:
+                print("\nNie wykryto powtarzających się sekwencji żądań.")
+
+            # 2. Wykrywanie wzorców użycia API
+            print("\nSzukanie wzorców użycia API...")
+
+            api_patterns = {}
+            api_keywords = ['/api/', '/v1/', '/v2/', '/v3/', '/rest/', '/graphql', '/gql', '/query']
+
+            for url, requests in self.captured_data.items():
+                # Sprawdź czy to może być URL API
+                if any(keyword in url for keyword in api_keywords):
+                    # Spróbuj wyekstrahować endpoint bez parametrów
+                    endpoint = url.split('?')[0] if '?' in url else url
+
+                    for req in requests:
+                        method = req.get('method', 'GET')
+                        key = f"{method} {endpoint}"
+
+                        if key not in api_patterns:
+                            api_patterns[key] = {
+                                'count': 0,
+                                'methods': set(),
+                                'params': set(),
+                                'timestamps': []
+                            }
+
+                        api_patterns[key]['count'] += 1
+                        api_patterns[key]['methods'].add(method)
+
+                        # Dodaj timestamp
+                        timestamp = req.get('timestamp')
+                        if timestamp:
+                            api_patterns[key]['timestamps'].append(timestamp)
+
+                        # Wyekstrahuj parametry URL
+                        if '?' in url:
+                            try:
+                                query_params = url.split('?', 1)[1]
+                                params = query_params.split('&')
+                                for param in params:
+                                    if '=' in param:
+                                        param_name = param.split('=')[0]
+                                        api_patterns[key]['params'].add(param_name)
+                            except:
+                                pass
+
+            if api_patterns:
+                # Posortuj według liczby wywołań
+                sorted_api_patterns = sorted(api_patterns.items(), key=lambda x: x[1]['count'], reverse=True)
+
+                print(f"\n[+] Wykryto {len(api_patterns)} wzorców API:")
+                for i, (endpoint, data) in enumerate(sorted_api_patterns[:10]):  # Pokaż top 10
+                    print(f"\n{i + 1}. {endpoint}")
+                    print(f"   Liczba wywołań: {data['count']}")
+                    print(f"   Metody: {', '.join(data['methods'])}")
+                    if data['params']:
+                        print(f"   Parametry: {', '.join(data['params'])}")
+
+                if len(sorted_api_patterns) > 10:
+                    print(f"\n... oraz {len(sorted_api_patterns) - 10} więcej endpointów API.")
+
+                patterns.append({
+                    'type': 'api_patterns',
+                    'description': 'Wzorce użycia API',
+                    'endpoints': [{
+                        'endpoint': endpoint,
+                        'count': data['count'],
+                        'methods': list(data['methods']),
+                        'params': list(data['params'])
+                    } for endpoint, data in sorted_api_patterns[:20]]  # Ogranicz do top 20
+                })
+            else:
+                print("\nNie wykryto wzorców API.")
+
+            # 3. Wykrywanie schematu nawigacji
+            print("\nSzukanie schematu nawigacji...")
+
+            navigation_flows = []
+
+            if len(all_requests) >= 3:  # Potrzebujemy co najmniej 3 żądania
+                current_flow = []
+
+                # Grupuj żądania według timestampa (z tolerancją 1 sekundy)
+                grouped_requests = []
+                current_group = [all_requests[0]]
+
+                for i in range(1, len(all_requests)):
+                    prev_req = all_requests[i - 1]
+                    curr_req = all_requests[i]
+
+                    try:
+                        # Spróbuj przeliczyć różnicę czasu
+                        prev_time = parse_timestamp(prev_req['timestamp'])
+                        curr_time = parse_timestamp(curr_req['timestamp'])
+                        time_diff = (curr_time - prev_time).total_seconds()
+
+                        # Jeśli różnica czasu jest mała, dodaj do bieżącej grupy
+                        if time_diff < 1.0:
+                            current_group.append(curr_req)
+                        else:
+                            # W przeciwnym razie zakończ bieżącą grupę i rozpocznij nową
+                            if current_group:
+                                grouped_requests.append(current_group)
+                            current_group = [curr_req]
+                    except:
+                        # Jeśli nie możemy porównać czasu, po prostu dodaj do bieżącej grupy
+                        current_group.append(curr_req)
+
+                # Dodaj ostatnią grupę
+                if current_group:
+                    grouped_requests.append(current_group)
+
+                # Dla każdej grupy, weź tylko główne żądanie (ignoruj zasoby statyczne)
+                navigation_sequence = []
+
+                for group in grouped_requests:
+                    # Wybierz żądanie, które prawdopodobnie jest głównym (nie statycznym zasobem)
+                    main_requests = [req for req in group if not any(ext in req['url'].lower()
+                                                                     for ext in
+                                                                     ['.js', '.css', '.jpg', '.jpeg', '.png', '.gif',
+                                                                      '.svg', '.woff', '.woff2'])]
+
+                    if main_requests:
+                        # Wybierz pierwszy z głównych żądań
+                        navigation_sequence.append(main_requests[0])
+
+                if navigation_sequence:
+                    print(f"\n[+] Wykryty schemat nawigacji ({len(navigation_sequence)} kroków):")
+                    for i, req in enumerate(navigation_sequence):
+                        print(f"{i + 1}. {req['method']} {req['url']} ({req['timestamp']})")
+
+                    patterns.append({
+                        'type': 'navigation_flow',
+                        'description': 'Schemat nawigacji użytkownika',
+                        'steps': [{
+                            'order': i + 1,
+                            'method': req['method'],
+                            'url': req['url'],
+                            'timestamp': req['timestamp']
+                        } for i, req in enumerate(navigation_sequence)]
+                    })
+                else:
+                    print("\nNie wykryto wyraźnego schematu nawigacji.")
+            else:
+                print("\nZbyt mało danych, aby wykryć schemat nawigacji.")
+
+            # 4. Podsumowanie
+            if patterns:
+                print(f"\n=== Podsumowanie wzorców ruchu ===")
+                print(f"Wykryto łącznie {len(patterns)} rodzajów wzorców.")
+            else:
+                print("\nNie wykryto żadnych wyraźnych wzorców w analizowanych danych.")
+
+            return patterns
+
+        except Exception as e:
+            print(f"Błąd podczas analizy wzorców ruchu: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
 # Uruchomienie programu
 if __name__ == "__main__":
