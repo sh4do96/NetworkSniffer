@@ -1055,12 +1055,20 @@ class NetworkSniffer:
                     print("Nieprawidłowy wybór. Wybierz opcję od 0 do 4.")
 
     def create_session_browser_app(self):
-        """Tworzy aplikację do przeglądania sesji w formie interaktywnej przeglądarki - wersja z zabezpieczeniami"""
+        """Tworzy aplikację do przeglądania sesji w formie interaktywnej przeglądarki"""
         if not self.captured_data or len(self.captured_data) == 0:
             print("Błąd: Brak danych do wyświetlenia.")
             return False
 
         try:
+            import os
+            import json
+
+            # Utwórz unikalny katalog sesji
+            import tempfile
+            session_dir = tempfile.mkdtemp(prefix='network_sniffer_')
+            print(f"Utworzono katalog tymczasowy: {session_dir}")
+
             # Sprawdź i napraw dane
             self.handle_session_data_errors()
 
@@ -1070,45 +1078,38 @@ class NetworkSniffer:
                 print("Nie udało się przygotować danych dla przeglądarki.")
                 return False
 
-            # Zapisz dane do pliku tymczasowego
+            # Ścieżki plików
+            data_file_path = os.path.join(session_dir, 'session_data.json')
+            html_file_path = os.path.join(session_dir, 'session_browser.html')
+
+            # Zapisz dane JSON
             try:
-                with open('temp_session_data.json', 'w', encoding='utf-8') as f:
-                    import json
+                with open(data_file_path, 'w', encoding='utf-8') as f:
                     json.dump(browser_data, f, indent=2, default=str)
-                print(f"Zapisano {len(browser_data)} URL w pliku tymczasowym.")
+                print(f"Zapisano dane do: {data_file_path}")
             except Exception as e:
-                print(f"Błąd podczas zapisywania pliku tymczasowego: {e}")
+                print(f"Błąd podczas zapisywania pliku danych: {e}")
                 return False
 
-            # Utwórz plik HTML dla przeglądarki sesji
+            # Wygeneruj zawartość HTML
+            html_content = self._get_session_browser_html()
+
+            # Zapisz plik HTML
             try:
-                with open('session_browser_app.html', 'w', encoding='utf-8') as f:
-                    f.write(self._get_session_browser_html())
-                print(f"Utworzono plik HTML przeglądarki sesji.")
+                with open(html_file_path, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                print(f"Zapisano HTML do: {html_file_path}")
             except Exception as e:
-                print(f"Błąd podczas tworzenia pliku HTML: {e}")
-                # Usuń plik danych jeśli nie udało się utworzyć HTML
-                try:
-                    if os.path.exists('temp_session_data.json'):
-                        os.remove('temp_session_data.json')
-                except:
-                    pass
+                print(f"Błąd podczas zapisywania pliku HTML: {e}")
                 return False
 
-            return True
+            # Zwróć ścieżkę do katalogu sesji
+            return session_dir
+
         except Exception as e:
-            print(f"Błąd podczas tworzenia aplikacji przeglądarki sesji: {e}")
+            print(f"Nieoczekiwany błąd podczas tworzenia przeglądarki sesji: {e}")
             import traceback
             traceback.print_exc()
-
-            # Spróbuj wyczyścić pliki tymczasowe w przypadku błędu
-            try:
-                for temp_file in ['temp_session_data.json', 'session_browser_app.html']:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-            except:
-                pass
-
             return False
 
     def _get_session_browser_html(self):
@@ -2137,11 +2138,7 @@ class NetworkSniffer:
             return None
 
     def handle_session_data_errors(self):
-        """Sprawdza i naprawia problemy w danych sesji
-
-        Returns:
-            bool: True jeśli dane są poprawne lub zostały naprawione, False w przeciwnym wypadku
-        """
+        """Sprawdza i naprawia problemy w danych sesji"""
         if not self.captured_data:
             print("Brak danych sesji do sprawdzenia.")
             return False
@@ -2151,76 +2148,38 @@ class NetworkSniffer:
 
             # Stwórz kopię danych, aby nie modyfikować oryginału podczas iteracji
             fixed_data = {}
-            problematic_urls = []
             fixed_count = 0
 
             for url, requests in self.captured_data.items():
                 if not isinstance(requests, list):
-                    print(f"Nieprawidłowy format danych dla URL: {url} (nie jest listą)")
-                    problematic_urls.append((url, "not_list"))
-                    # Spróbuj naprawić konwertując na listę jeśli to możliwe
-                    if isinstance(requests, dict):
-                        fixed_data[url] = [requests]
-                        fixed_count += 1
-                        print(f"Naprawiono dane dla URL: {url}")
+                    print(f"Nieprawidłowy format danych dla URL: {url}")
                     continue
 
                 valid_requests = []
 
                 for req in requests:
                     if not isinstance(req, dict):
-                        print(f"Nieprawidłowy format żądania dla URL: {url} (nie jest słownikiem)")
+                        print(f"Nieprawidłowy format żądania dla URL: {url}")
                         continue
 
-                    # Upewnij się, że wymagane pola są obecne
-                    if 'timestamp' not in req:
-                        req['timestamp'] = 'unknown'
+                    # Uzupełnij brakujące pola domyślnymi wartościami
+                    req.setdefault('timestamp', str(datetime.now()))
+                    req.setdefault('method', 'GET')
+                    req.setdefault('headers', {})
+                    req.setdefault('cookies', {})
 
-                    if 'method' not in req:
-                        req['method'] = 'GET'
-
-                    if 'headers' not in req:
-                        req['headers'] = {}
-
-                    if 'cookies' not in req:
-                        req['cookies'] = {}
-
-                    # Dodaj naprawione żądanie
                     valid_requests.append(req)
 
-                if len(valid_requests) != len(requests):
-                    print(f"Naprawiono {len(requests) - len(valid_requests)} problematycznych żądań dla URL: {url}")
-                    fixed_count += 1
+                if valid_requests:
+                    fixed_data[url] = valid_requests
 
-                fixed_data[url] = valid_requests
-
-            # Sprawdź, czy są URL bez żadnych ważnych żądań
-            empty_urls = [url for url, reqs in fixed_data.items() if not reqs]
-            for url in empty_urls:
-                print(f"Usuwanie URL bez ważnych żądań: {url}")
-                del fixed_data[url]
-                fixed_count += 1
-
-            # Zastosuj naprawione dane
-            if fixed_count > 0:
-                print(f"Naprawiono {fixed_count} problemów w danych sesji.")
+            # Zastąp oryginalne dane naprawionymi
+            if fixed_data:
                 self.captured_data = fixed_data
+                print("Dane sesji zostały naprawione.")
             else:
-                print("Nie znaleziono problemów w danych sesji.")
-
-            # Dodatkowe sprawdzenie zduplikowanych timestampów
-            timestamp_counts = {}
-            for url, requests in self.captured_data.items():
-                for req in requests:
-                    timestamp = req.get('timestamp', 'unknown')
-                    if timestamp not in timestamp_counts:
-                        timestamp_counts[timestamp] = 0
-                    timestamp_counts[timestamp] += 1
-
-            duplicate_timestamps = [ts for ts, count in timestamp_counts.items() if count > 10 and ts != 'unknown']
-            if duplicate_timestamps:
-                print(f"Uwaga: Wykryto {len(duplicate_timestamps)} powtarzających się timestampów.")
-                print("To może wskazywać na problem z danymi.")
+                print("Nie udało się naprawić danych sesji.")
+                return False
 
             return True
 
@@ -2231,11 +2190,7 @@ class NetworkSniffer:
             return False
 
     def prepare_session_browser_data(self):
-        """Przygotowuje dane dla przeglądarki sesji, konwertując je do odpowiedniego formatu
-
-        Returns:
-            dict: Przygotowane dane sesji
-        """
+        """Przygotowuje dane dla przeglądarki sesji, konwertując je do odpowiedniego formatu"""
         if not self.captured_data:
             print("Brak danych do przygotowania.")
             return {}
@@ -2248,6 +2203,9 @@ class NetworkSniffer:
 
             # Przygotuj dane w formacie odpowiednim dla przeglądarki
             browser_data = {}
+
+            # Generator unikalnych identyfikatorów
+            import uuid
 
             for url, requests in self.captured_data.items():
                 # Pomiń URL bez żądań
@@ -2276,9 +2234,14 @@ class NetworkSniffer:
                     if not isinstance(req, dict):
                         continue
 
+                    # Dodaj unikalny identyfikator, aby rozwiązać problem powtarzających się sygnatur czasowych
+                    unique_id = str(uuid.uuid4())
+
                     # Skopiuj tylko potrzebne pola
                     prepared_req = {
-                        'timestamp': req.get('timestamp', 'unknown'),
+                        'unique_id': unique_id,  # Dodaj unikalny identyfikator
+                        'original_timestamp': req.get('timestamp', 'unknown'),
+                        'timestamp': f"{req.get('timestamp', 'unknown')}_{unique_id}",  # Dodaj unikalność
                         'method': req.get('method', 'GET'),
                         'headers': req.get('headers', {}),
                         'cookies': req.get('cookies', {}),
@@ -2295,8 +2258,12 @@ class NetworkSniffer:
 
                     prepared_requests.append(prepared_req)
 
+                # Sortuj żądania chronologicznie
+                prepared_requests.sort(key=lambda x: x.get('original_timestamp', ''))
+
                 browser_data[url] = prepared_requests
 
+            print(f"Przygotowano dane dla {len(browser_data)} URL.")
             return browser_data
 
         except Exception as e:
@@ -2314,107 +2281,161 @@ class NetworkSniffer:
             return False
 
         try:
-            # Utwórz pliki dla aplikacji przeglądarki sesji
-            if not self.create_session_browser_app():
-                print("Nie udało się utworzyć aplikacji przeglądarki sesji.")
-                return False
-
-            # Importy do obsługi proxy
+            import os
             import http.server
             import socketserver
+            import json
+            import webbrowser
             import urllib.parse
 
-            # Utwórz klasę obsługującą żądania HTTP z funkcją proxy
-            class InteractiveSessionBrowserHandler(http.server.SimpleHTTPRequestHandler):
+            # Utwórz katalog tymczasowy
+            import tempfile
+            session_dir = tempfile.mkdtemp(prefix='network_sniffer_')
+            print(f"Utworzono katalog tymczasowy: {session_dir}")
+
+            # Dokładne logowanie ścieżek i plików
+            def log_directory_contents(directory):
+                print("\n--- Zawartość katalogu ---")
+                for root, dirs, files in os.walk(directory):
+                    level = root.replace(directory, '').count(os.sep)
+                    indent = ' ' * 4 * level
+                    print(f"{indent}{os.path.basename(root)}/")
+                    subindent = ' ' * 4 * (level + 1)
+                    for file in files:
+                        print(f"{subindent}{file}")
+
+            # Przygotuj dane
+            browser_data = self.prepare_session_browser_data()
+            if not browser_data:
+                print("Nie udało się przygotować danych dla przeglądarki.")
+                return False
+
+            # Ścieżki plików
+            data_file_path = os.path.join(session_dir, 'data.json')
+            index_file_path = os.path.join(session_dir, 'index.html')
+
+            # Zapisz dane JSON
+            with open(data_file_path, 'w', encoding='utf-8') as f:
+                json.dump(browser_data, f, indent=2, default=str)
+            print(f"Zapisano dane do: {data_file_path}")
+
+            # Wygeneruj pełny HTML z osadzonym skryptem
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Przeglądarka przechwyconych danych</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
+                    #app {{ max-width: 800px; margin: 0 auto; }}
+                    .url-list {{ list-style-type: none; padding: 0; }}
+                    .url-item {{ margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; }}
+                </style>
+            </head>
+            <body>
+                <div id="app">
+                    <h1>Przechwycone dane sieciowe</h1>
+                    <div id="debug"></div>
+                    <ul id="urlList" class="url-list"></ul>
+                </div>
+
+                <script>
+                    // Funkcja debugowania
+                    function debugLog(message) {{
+                        const debugEl = document.getElementById('debug');
+                        debugEl.innerHTML += `<p>${{message}}</p>`;
+                        console.log(message);
+                    }}
+
+                    // Wczytaj dane
+                    debugLog('Rozpoczynam ładowanie danych');
+                    fetch('./data.json')
+                        .then(response => {{
+                            debugLog(`Status odpowiedzi: ${{response.status}}`);
+                            return response.json();
+                        }})
+                        .then(data => {{
+                            debugLog('Dane zostały wczytane');
+                            const urlList = document.getElementById('urlList');
+
+                            // Wyświetl listę URL
+                            Object.entries(data).forEach(([url, requests]) => {{
+                                const listItem = document.createElement('li');
+                                listItem.className = 'url-item';
+                                listItem.innerHTML = `
+                                    <strong>URL:</strong> ${{url}}<br>
+                                    <strong>Liczba żądań:</strong> ${{requests.length}}
+                                `;
+                                urlList.appendChild(listItem);
+                            }});
+                        }})
+                        .catch(error => {{
+                            debugLog(`Błąd ładowania danych: ${{error.message}}`);
+                            document.getElementById('urlList').innerHTML = 
+                                `<li>Nie udało się wczytać danych: ${{error.message}}</li>`;
+                        }});
+                </script>
+            </body>
+            </html>
+            """
+
+            # Zapisz plik index.html
+            with open(index_file_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            print(f"Zapisano index.html do: {index_file_path}")
+
+            # Wyświetl zawartość katalogu
+            log_directory_contents(session_dir)
+
+            # Niestandardowy handler HTTP z dokładnym logowaniem
+            class DetailedHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 def __init__(self, *args, **kwargs):
-                    self.sniffer = kwargs.pop('sniffer', None)  # Extract sniffer reference
-                    super().__init__(*args, **kwargs)
+                    self.directory = session_dir
+                    super().__init__(*args, directory=session_dir, **kwargs)
+
+                def log_message(self, format, *args):
+                    print(f"[HTTP Log] {format % args}")
 
                 def do_GET(self):
-                    if self.path == '/':
-                        self.path = '/session_browser_app.html'
-                    elif self.path == '/data':
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        with open('temp_session_data.json', 'rb') as f:
-                            self.wfile.write(f.read())
-                        return
-                    elif self.path.startswith('/proxy/'):
-                        # Obsługa proxy dla odtwarzania żądań
-                        try:
-                            # Dekoduj URL, do którego ma być wysłane żądanie
-                            encoded_url = self.path[7:]  # usuń '/proxy/'
-                            target_url = urllib.parse.unquote(encoded_url)
+                    # Dekoduj ścieżkę
+                    path = urllib.parse.unquote(self.path)
 
-                            # Pobierz dane dla tego URL
-                            session_data = {}
-                            with open('temp_session_data.json', 'r') as f:
-                                import json
-                                session_data = json.load(f)
+                    print(f"\n--- Żądanie GET ---")
+                    print(f"Oryginalna ścieżka: {self.path}")
+                    print(f"Zdekodowana ścieżka: {path}")
+                    print(f"Katalog bazowy: {self.directory}")
 
-                            if target_url in session_data:
-                                # Użyj pierwszego żądania jako wzorca
-                                request_data = session_data[target_url][0]
+                    # Jeśli żądanie główne, przekieruj do index.html
+                    if path == '/' or path == '':
+                        self.path = '/index.html'
 
-                                # Odtwórz żądanie
-                                if self.sniffer:
-                                    response = self.sniffer.replay_request(target_url, request_data)
+                    # Pełna ścieżka pliku
+                    full_path = os.path.normpath(os.path.join(
+                        self.directory,
+                        self.path.split('?')[0].lstrip('/')
+                    ))
 
-                                    # Wyślij odpowiedź
-                                    self.send_response(response.get('status', 200))
+                    print(f"Pełna ścieżka pliku: {full_path}")
+                    print(f"Czy plik istnieje: {os.path.exists(full_path)}")
 
-                                    # Dodaj nagłówki
-                                    for header, value in response.get('headers', {}).items():
-                                        if header.lower() not in ['content-length', 'transfer-encoding']:
-                                            self.send_header(header, value)
+                    # Wyświetl listę wszystkich plików
+                    print("\nDostępne pliki:")
+                    for root, dirs, files in os.walk(self.directory):
+                        for file in files:
+                            print(os.path.join(root, file))
 
-                                    self.end_headers()
+                    return super().do_GET()
 
-                                    # Wyślij treść
-                                    content = response.get('content', '')
-                                    if isinstance(content, str):
-                                        self.wfile.write(content.encode('utf-8', errors='ignore'))
-                                    else:
-                                        self.wfile.write(content)
-                                else:
-                                    self.send_response(500)
-                                    self.send_header('Content-type', 'text/plain')
-                                    self.end_headers()
-                                    self.wfile.write(b"Blad: Brak dostepu do obiektu sniffer")
-                            else:
-                                self.send_response(404)
-                                self.send_header('Content-type', 'text/plain')
-                                self.end_headers()
-                                self.wfile.write(f"URL {target_url} nie znaleziony w danych sesji".encode())
-                        except Exception as e:
-                            import traceback
-                            traceback.print_exc()
-
-                            self.send_response(500)
-                            self.send_header('Content-type', 'text/plain')
-                            self.end_headers()
-                            self.wfile.write(f"Błąd: {str(e)}".encode())
-                        return
-
-                    return http.server.SimpleHTTPRequestHandler.do_GET(self)
-
-            # Utwórz handler z referencją do obiektu sniffer
-            handler = lambda *args, **kwargs: InteractiveSessionBrowserHandler(*args, sniffer=self, **kwargs)
-
-            # Uruchom serwer HTTP
+            # Uruchom serwer
+            handler = DetailedHTTPRequestHandler
             with socketserver.TCPServer(("", 8000), handler) as httpd:
-                print("Serwer interaktywnej przeglądarki uruchomiony na http://localhost:8000")
+                print("\nSerwer uruchomiony na http://localhost:8000")
                 print("Otwórz przeglądarkę i przejdź do adresu: http://localhost:8000")
-                print("Naciśnij Ctrl+C, aby zatrzymać serwer")
 
                 try:
                     # Otwórz przeglądarkę
-                    try:
-                        import webbrowser
-                        webbrowser.open("http://localhost:8000")
-                    except Exception as e:
-                        print(f"Nie udało się automatycznie otworzyć przeglądarki: {e}")
+                    webbrowser.open("http://localhost:8000")
 
                     # Uruchom serwer
                     httpd.serve_forever()
@@ -2422,28 +2443,14 @@ class NetworkSniffer:
                     print("\nZatrzymywanie serwera...")
                 except Exception as e:
                     print(f"\nBłąd podczas działania serwera: {e}")
-                finally:
-                    try:
-                        httpd.shutdown()
-                    except:
-                        pass
-                    # Usuń pliki tymczasowe
-                    for temp_file in ['temp_session_data.json', 'session_browser_app.html']:
-                        try:
-                            if os.path.exists(temp_file):
-                                os.remove(temp_file)
-                        except Exception as e:
-                            print(f"Nie udało się usunąć pliku {temp_file}: {e}")
-                    print("Serwer zatrzymany.")
-                    return True
+
+            return True
 
         except Exception as e:
             print(f"Błąd podczas uruchamiania interaktywnej przeglądarki sesji: {e}")
             import traceback
             traceback.print_exc()
-            # Jeśli nie udało się uruchomić zaawansowanej przeglądarki, spróbuj utworzyć prostszą wersję statyczną
-            print("Próba utworzenia statycznej wersji przeglądarki...")
-            return self.create_simple_browser_fallback()
+            return False
 
     def replay_specific_request(self):
         """Pozwala użytkownikowi wybrać i odtworzyć konkretne żądanie z przechwyconych danych"""
@@ -4920,198 +4927,6 @@ class NetworkSniffer:
     """
         return html
 
-    def _generate_filename_from_url(self, url):
-        """Generuje odpowiednią nazwę pliku na podstawie URL"""
-        # Wyodrębnij domenę i ścieżkę
-        if '://' in url:
-            parts = url.split('://', 1)
-            protocol = parts[0]
-            domain_path = parts[1]
-        else:
-            protocol = 'http'
-            domain_path = url
-
-        # Rozdziel domenę i ścieżkę
-        if '/' in domain_path:
-            domain_parts = domain_path.split('/', 1)
-            domain = domain_parts[0]
-            path = domain_parts[1]
-        else:
-            domain = domain_path
-            path = ''
-
-        # Usuń parametry URL (wszystko po ?)
-        if '?' in path:
-            path = path.split('?', 1)[0]
-
-        # Usuń nielegalne znaki
-        for char in [':', '?', '&', '=', '#', '*', '"', "'", '<', '>', '|']:
-            path = path.replace(char, '_')
-
-        # Ogranicz długość ścieżki
-        if len(path) > 50:
-            path = path[:50]
-
-        # Dodaj rozszerzenie .html
-        if not path:
-            path = 'index'
-
-        # Unikalna nazwa bazująca na domenie i ścieżce
-        unique_id = str(hash(url) % 10000).zfill(4)  # 4-cyfrowy identyfikator
-        filename = f"{domain.replace('.', '_')}_{path.replace('/', '_')}_{unique_id}.html"
-
-        return filename
-
-    def _add_navigation_scripts(self, html_content, current_url, session_id):
-        """Dodaje skrypty JavaScript do nawigacji między stronami"""
-        nav_script = f"""
-    <script>
-    // Dane sesji
-    const sessionId = "{session_id}";
-    const currentUrl = "{current_url}";
-
-    // Historia przeglądania
-    let sessionHistory = [];
-    let currentHistoryPosition = -1;
-
-    // Załaduj historię z localStorage jeśli istnieje
-    function loadHistory() {{
-        const savedHistory = localStorage.getItem(`browser_session_${{sessionId}}`);
-        if (savedHistory) {{
-            try {{
-                const historyData = JSON.parse(savedHistory);
-                sessionHistory = historyData.history || [];
-                currentHistoryPosition = historyData.position || -1;
-            }} catch (e) {{
-                console.error('Błąd wczytywania historii:', e);
-                sessionHistory = [];
-                currentHistoryPosition = -1;
-            }}
-        }}
-
-        // Jeśli bieżący URL nie jest w historii lub rozpoczynamy nową sesję
-        if (sessionHistory.length === 0 || sessionHistory[currentHistoryPosition] !== currentUrl) {{
-            // Jeśli jesteśmy w środku historii, usuń wszystko po bieżącej pozycji
-            if (currentHistoryPosition >= 0 && currentHistoryPosition < sessionHistory.length - 1) {{
-                sessionHistory = sessionHistory.slice(0, currentHistoryPosition + 1);
-            }}
-
-            // Dodaj bieżący URL do historii
-            sessionHistory.push(currentUrl);
-            currentHistoryPosition = sessionHistory.length - 1;
-            saveHistory();
-        }}
-
-        updateNavButtons();
-    }}
-
-    // Zapisz historię do localStorage
-    function saveHistory() {{
-        try {{
-            localStorage.setItem(`browser_session_${{sessionId}}`, JSON.stringify({{
-                history: sessionHistory,
-                position: currentHistoryPosition
-            }}));
-        }} catch (e) {{
-            console.error('Błąd zapisywania historii:', e);
-        }}
-    }}
-
-    // Aktualizuj stan przycisków nawigacji
-    function updateNavButtons() {{
-        const backBtn = document.getElementById('backBtn');
-        const forwardBtn = document.getElementById('forwardBtn');
-
-        if (backBtn) {{
-            backBtn.disabled = currentHistoryPosition <= 0;
-        }}
-
-        if (forwardBtn) {{
-            forwardBtn.disabled = currentHistoryPosition >= sessionHistory.length - 1;
-        }}
-    }}
-
-    // Obsługa nawigacji wstecz
-    function goBack() {{
-        if (currentHistoryPosition > 0) {{
-            currentHistoryPosition--;
-            const url = sessionHistory[currentHistoryPosition];
-            saveHistory();
-            window.location.href = url.replace('http://', 'file:///{session_id}/').replace('https://', 'file:///{session_id}/');
-        }}
-    }}
-
-    // Obsługa nawigacji do przodu
-    function goForward() {{
-        if (currentHistoryPosition < sessionHistory.length - 1) {{
-            currentHistoryPosition++;
-            const url = sessionHistory[currentHistoryPosition];
-            saveHistory();
-            window.location.href = url.replace('http://', 'file:///{session_id}/').replace('https://', 'file:///{session_id}/');
-        }}
-    }}
-
-    // Przechwytuj kliknięcia na linki
-    document.addEventListener('DOMContentLoaded', function() {{
-        // Inicjalizacja historii
-        loadHistory();
-
-        // Obsługa przycisków nawigacji
-        const backBtn = document.getElementById('backBtn');
-        const forwardBtn = document.getElementById('forwardBtn');
-        const homeBtn = document.getElementById('homeBtn');
-
-        if (backBtn) backBtn.addEventListener('click', goBack);
-        if (forwardBtn) forwardBtn.addEventListener('click', goForward);
-        if (homeBtn) homeBtn.addEventListener('click', function() {{
-            window.location.href = 'session_index.html';
-        }});
-
-        // Przechwytuj kliknięcia na linki
-        document.addEventListener('click', function(e) {{
-            let target = e.target;
-            while (target && target.tagName !== 'A') {{
-                target = target.parentElement;
-            }}
-
-            if (target && target.href) {{
-                e.preventDefault();
-
-                // Dodaj bieżący URL do historii
-                if (currentHistoryPosition >= 0 && currentHistoryPosition < sessionHistory.length - 1) {{
-                    sessionHistory = sessionHistory.slice(0, currentHistoryPosition + 1);
-                }}
-
-                const clickedUrl = target.href;
-                sessionHistory.push(clickedUrl);
-                currentHistoryPosition = sessionHistory.length - 1;
-                saveHistory();
-
-                // Nawiguj do URL
-                if (clickedUrl.startsWith('http://') || clickedUrl.startsWith('https://')) {{
-                    // Przekieruj do odpowiedniego pliku w sesji
-                    const mappedUrl = clickedUrl.replace('http://', 'file:///{session_id}/').replace('https://', 'file:///{session_id}/');
-                    window.location.href = mappedUrl;
-                }} else {{
-                    // Bezpośredni link lokalny
-                    window.location.href = clickedUrl;
-                }}
-            }}
-        }});
-    }});
-    </script>
-    """
-
-        # Dodaj skrypt nawigacji przed </body> lub </html>
-        if '</body>' in html_content:
-            html_content = html_content.replace('</body>', nav_script + '</body>')
-        elif '</html>' in html_content:
-            html_content = html_content.replace('</html>', nav_script + '</body></html>')
-        else:
-            html_content += nav_script
-
-        return html_content
-
     def _launch_session_browser(self, session_dir, url_to_file_map):
         """Uruchamia przeglądarkę z indeksem stron sesji"""
         # Utwórz stronę indeksu
@@ -5309,240 +5124,6 @@ class NetworkSniffer:
 
         return html
 
-    def reconstruct_html_page(self, url, requests):
-        """Rekonstruuje pełną stronę HTML na podstawie przechwyconych żądań
-
-        Args:
-            url (str): URL strony do rekonstrukcji
-            requests (list): Lista przechwyconych żądań dla tego URL
-
-        Returns:
-            str: Zrekonstruowany kod HTML strony
-        """
-        if not requests:
-            return f"<html><body><h1>Brak danych dla {url}</h1></body></html>"
-
-        # Znajdź główne żądanie HTML
-        main_request = None
-        html_content = None
-
-        for req in requests:
-            # Sprawdź nagłówki aby znaleźć odpowiedź HTML
-            headers = req.get('headers', {})
-            if isinstance(headers, dict):  # Upewnij się, że headers to słownik
-                content_type = headers.get('Content-Type', '')
-                if isinstance(content_type, str) and 'text/html' in content_type.lower():
-                    main_request = req
-                    # Sprawdź czy mamy treść odpowiedzi
-                    for response in req.get('responses', []):
-                        if 'content' in response:
-                            html_content = response['content']
-                            break
-                    break
-
-        # Jeśli nie znaleziono żądania HTML, użyj pierwszego żądania
-        if not main_request:
-            main_request = requests[0]
-
-        # Jeśli nie mamy treści HTML, wygeneruj zastępczą stronę
-        if not html_content:
-            base_domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
-
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>{base_domain}</title>
-                <style>
-                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
-                    .header {{ background: #f5f5f5; padding: 15px; border-bottom: 1px solid #ddd; }}
-                    .content {{ padding: 20px; }}
-                    .request-info {{ margin-bottom: 20px; padding: 10px; border: 1px solid #eee; }}
-                    .resource {{ margin: 5px 0; padding: 8px; background: #f9f9f9; border-radius: 4px; }}
-                    .http {{ color: #e74c3c; }}
-                    .https {{ color: #27ae60; }}
-                    .nav-bar {{ background: #333; color: white; padding: 10px; display: flex; align-items: center; }}
-                    .nav-button {{ margin-right: 10px; padding: 5px 10px; background: #555; border: none; color: white; cursor: pointer; }}
-                    .url-display {{ flex-grow: 1; padding: 5px 10px; background: #444; border-radius: 3px; }}
-                </style>
-            </head>
-            <body>
-                <div class="nav-bar">
-                    <button class="nav-button" id="backBtn">◀</button>
-                    <button class="nav-button" id="forwardBtn">▶</button>
-                    <button class="nav-button" id="homeBtn">🏠</button>
-                    <div class="url-display">{url}</div>
-                </div>
-
-                <div class="header">
-                    <h2>Zrekonstruowana strona: {url}</h2>
-                    <p>Ta strona została zrekonstruowana na podstawie przechwyconych danych.</p>
-                </div>
-                <div class="content">
-                    <div class="request-info">
-                        <h3>Informacje o żądaniu</h3>
-                        <p><strong>URL:</strong> {url}</p>
-                        <p><strong>Metoda:</strong> {main_request.get('method', 'GET')}</p>
-                        <p><strong>Czas:</strong> {main_request.get('timestamp', 'nieznany')}</p>
-                    </div>
-            """
-
-            # Dodaj informacje o zasobach
-            resource_count = 0
-            html_content += "<h3>Powiązane zasoby</h3>"
-
-            for req in requests:
-                if req != main_request:
-                    req_url = req.get('url', url)
-                    protocol = "HTTPS" if req_url.startswith("https://") else "HTTP"
-                    protocol_class = "https" if protocol == "HTTPS" else "http"
-
-                    html_content += f"""
-                    <div class="resource">
-                        <span class="{protocol_class}">{protocol}</span> {req.get('method', 'GET')} {req_url}
-                    </div>
-                    """
-                    resource_count += 1
-
-                    # Ogranicz liczbę wyświetlanych zasobów
-                    if resource_count >= 20:
-                        html_content += f"<p>... oraz {len(requests) - 21} więcej zasobów</p>"
-                        break
-
-            html_content += """
-                </div>
-            </body>
-            </html>
-            """
-
-        # Dodaj skrypt do przechwytywania kliknięć i nawigacji
-        inject_script = """
-        <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Przechwytuj kliknięcia
-            document.addEventListener('click', function(e) {
-                // Sprawdź czy kliknięto link
-                let target = e.target;
-                while (target && target.tagName !== 'A') {
-                    target = target.parentElement;
-                }
-
-                if (target && target.href) {
-                    console.log('Kliknięto link:', target.href);
-                    // Nawigacja będzie obsługiwana przez skrypt nawigacji
-                }
-            });
-
-            // Oznacz wszystkie linki
-            const links = document.querySelectorAll('a');
-            links.forEach(link => {
-                link.style.border = '1px dashed #3498db';
-                link.style.padding = '2px 4px';
-                link.setAttribute('title', 'Kliknij, aby przejść do: ' + link.href);
-            });
-        });
-        </script>
-        """
-
-        # Dodaj skrypt do kodu HTML
-        if '</body>' in html_content:
-            html_content = html_content.replace('</body>', inject_script + '</body>')
-        elif '</html>' in html_content:
-            html_content = html_content.replace('</html>', inject_script + '</body></html>')
-        else:
-            html_content += inject_script
-
-        return html_content
-
-    def browse_captured_pages(self):
-        """Tworzy statyczne pliki HTML do przeglądania przechwyconych stron i uruchamia przeglądarkę"""
-        if not self.captured_data:
-            print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
-            return False
-
-        try:
-            import os
-            import json
-            from datetime import datetime
-            import webbrowser
-            import shutil
-
-            # Utwórz katalog dla przeglądarki, jeśli nie istnieje
-            browser_dir = "captured_browser"
-            if os.path.exists(browser_dir):
-                shutil.rmtree(browser_dir)  # Usuń istniejący katalog, aby uniknąć konfliktów
-            os.makedirs(browser_dir)
-
-            # Utwórz katalog dla stron
-            pages_dir = os.path.join(browser_dir, "pages")
-            os.makedirs(pages_dir)
-
-            # Przygotuj dane indeksu
-            index_data = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "total_urls": len(self.captured_data),
-                "total_requests": sum(len(reqs) for reqs in self.captured_data.values()),
-                "pages": []
-            }
-
-            print(f"\nGenerowanie {len(self.captured_data)} stron HTML...")
-
-            # Przetwórz wszystkie URL
-            for i, (url, requests) in enumerate(self.captured_data.items()):
-                if not requests:
-                    continue  # Pomijaj URL bez żądań
-
-                # Generuj nazwę pliku na podstawie URL
-                safe_filename = self._get_safe_filename(url)
-                page_filename = f"page_{i + 1}_{safe_filename}.html"
-                page_path = os.path.join(pages_dir, page_filename)
-
-                # Dodaj stronę do indeksu
-                index_data["pages"].append({
-                    "url": url,
-                    "is_https": url.startswith("https://"),
-                    "requests": len(requests),
-                    "filename": page_filename,
-                    "method": requests[0].get("method", "GET") if requests else "GET",
-                    "timestamp": requests[0].get("timestamp", "unknown") if requests else "unknown"
-                })
-
-                # Generuj zawartość strony HTML
-                page_html = self._generate_page_html(url, requests, i + 1, len(self.captured_data))
-
-                # Zapisz stronę
-                with open(page_path, "w", encoding="utf-8", errors="ignore") as f:
-                    f.write(page_html)
-
-                # Pokaż postęp
-                print(f"Wygenerowano stronę {i + 1}/{len(self.captured_data)}: {url}")
-
-            # Wygeneruj plik indeksu
-            index_path = os.path.join(browser_dir, "index.html")
-            index_html = self._generate_index_html(index_data)
-
-            with open(index_path, "w", encoding="utf-8") as f:
-                f.write(index_html)
-
-            print(f"\nWygenerowano przeglądarkę stron w katalogu: {browser_dir}")
-            print(f"Otwieram przeglądarkę z indeksem stron...")
-
-            # Otwórz przeglądarkę z indeksem
-            try:
-                webbrowser.open(f"file://{os.path.abspath(index_path)}")
-                print("Przeglądarka została uruchomiona.")
-            except Exception as e:
-                print(f"Nie udało się automatycznie otworzyć przeglądarki: {e}")
-                print(f"Możesz ręcznie otworzyć plik: {index_path}")
-
-            return True
-
-        except Exception as e:
-            print(f"Błąd podczas tworzenia przeglądarki stron: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
 
     def _get_safe_filename(self, url):
         """Konwertuje URL na bezpieczną nazwę pliku"""
