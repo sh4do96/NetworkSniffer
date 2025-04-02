@@ -13,7 +13,7 @@ import pickle
 from datetime import datetime
 from domain_resolver import improve_url_identification
 import gzip
-import zlib
+
 
 class NetworkSniffer:
     def __init__(self):
@@ -325,29 +325,21 @@ class NetworkSniffer:
                                 response_headers[field] = str(packet[HTTPResponse].fields[field])
 
                         # Treść odpowiedzi
-
+                        # Treść odpowiedzi
                         raw_content = packet[scapy.Raw].load  # Surowe dane binarne
 
-                        # Sprawdzenie, czy odpowiedź jest skompresowana gzipem lub deflate
-                        if 'Content-Encoding' in response_headers:
-                            encoding = response_headers['Content-Encoding'].lower()
-
+                        # Sprawdzenie, czy odpowiedź jest skompresowana gzipem
+                        if 'Content-Encoding' in response_headers and 'gzip' in response_headers[
+                            'Content-Encoding'].lower():
                             try:
-                                if 'gzip' in encoding:
-                                    response_content = gzip.decompress(raw_content).decode('utf-8', errors='replace')
-                                    print("✅ Odpowiedź była skompresowana gzipem, została zdekompresowana.")
-                                elif 'deflate' in encoding:
-                                    response_content = zlib.decompress(raw_content).decode('utf-8', errors='replace')
-                                    print("✅ Odpowiedź była skompresowana deflate, została zdekompresowana.")
-                                else:
-                                    response_content = raw_content.decode('utf-8',
-                                                                          errors='backslashreplace')  # Domyślny fallback
+                                response_content = gzip.decompress(raw_content).decode('utf-8', errors='replace')
+                                print("Odpowiedź była skompresowana gzipem, została zdekompresowana.")
                             except Exception as e:
-                                print(f"❌ Błąd dekompresji: {e}")
-                                response_content = raw_content.decode(
-                                    errors='backslashreplace')  # Zwrot surowych danych w razie błędu
+                                print(f"Błąd dekompresji: {e}")
+                                response_content = raw_content  # W razie błędu zwróć oryginalne dane
                         else:
-                            response_content = raw_content.decode(errors='backslashreplace')  # Brak kompresji
+                            response_content = raw_content.decode(
+                                errors='backslashreplace')  # Standardowy dekodowany tekst
 
                         # Dodaj odpowiedź do ostatniego żądania
                         for url, requests in self.captured_data.items():

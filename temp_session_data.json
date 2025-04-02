@@ -1,0 +1,177 @@
+{
+  "httpforever.com/": [
+    {
+      "timestamp": "2025-04-02 20:18:28",
+      "method": "GET",
+      "url": "httpforever.com/",
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept_Encoding": "gzip, deflate",
+        "Accept_Language": "pl,en-US;q=0.7,en;q=0.3",
+        "Connection": "keep-alive",
+        "Host": "httpforever.com",
+        "If_Modified_Since": "Wed, 22 Mar 2023 14:54:48 GMT",
+        "If_None_Match": "W/\"641b16b8-1404\"",
+        "Referer": "https://www.google.com/",
+        "Upgrade_Insecure_Requests": "1",
+        "User_Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Unknown_Headers": "{b'Priority': b'u=0, i'}",
+        "Http_Version": "HTTP/1.1"
+      },
+      "cookies": {},
+      "post_data": null,
+      "protocol": "HTTP",
+      "src_ip": "192.168.0.183",
+      "dst_ip": "146.190.62.39",
+      "responses": []
+    }
+  ]
+}{
+  "httpforever.com/": [
+    {
+      "timestamp": "2025-04-02 20:18:28",
+      "method": "GET",
+      "url": "httpforever.com/",
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept_Encoding": "gzip, deflate",
+        "Accept_Language": "pl,en-US;q=0.7,en;q=0.3",
+        "Connection": "keep-alive",
+        "Host": "httpforever.com",
+        "If_Modified_Since": "Wed, 22 Mar 2023 14:54:48 GMT",
+        "If_None_Match": "W/\"641b16b8-1404\"",
+        "Referer": "https://www.google.com/",
+        "Upgrade_Insecure_Requests": "1",
+        "User_Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Unknown_Headers": "{b'Priority': b'u=0, i'}",
+        "Http_Version": "HTTP/1.1"
+      },
+      "cookies": {},
+      "post_data": null,
+      "protocol": "HTTP",
+      "src_ip": "192.168.0.183",
+      "dst_ip": "146.190.62.39",
+      "responses": []
+    }
+  ],
+  "chomikuj.pl/": [
+    {
+      "timestamp": "2025-04-02 20:18:31",
+      "method": "GET",
+      "url": "chomikuj.pl/",
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept_Encoding": "gzip, deflate",
+        "Accept_Language": "pl,en-US;q=0.7,en;q=0.3",
+        "Connection": "keep-alive",
+        "Cookie": "guid=248b2518-9bad-4ce1-8330-6effed478c51; chTA=1; chAPC=1; RememberMe=9754818=1da14491a8d9bcb031a6dbaaf68f5955; rcid=6; __RequestVerificationToken_Lw__=dDJUuEas8dTlqESfEeAdwbKIxsbPwO/14Xogk7jGoh5JiZNTWl/kAF2piF0sw6ncc0cTTxo9lj2aahzUoRDsqSJ+URHlib8d1LP0f57Ubd8COFFjgFE5bls68fwk1f0hFjH0Vg==; ChomikSession=34aa2c90-6db0-48c0-a62b-1e26cf75bdad; cookiesAccepted=1",
+        "Host": "chomikuj.pl",
+        "Upgrade_Insecure_Requests": "1",
+        "User_Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Unknown_Headers": "{b'Priority': b'u=0, i'}",
+        "Http_Version": "HTTP/1.1"
+      },
+      "cookies": {
+        "guid": "248b2518-9bad-4ce1-8330-6effed478c51",
+        "chTA": "1",
+        "chAPC": "1",
+        "RememberMe": "9754818=1da14491a8d9bcb031a6dbaaf68f5955",
+        "rcid": "6",
+        "__RequestVerificationToken_Lw__": "dDJUuEas8dTlqESfEeAdwbKIxsbPwO/14Xogk7jGoh5JiZNTWl/kAF2piF0sw6ncc0cTTxo9lj2aahzUoRDsqSJ+URHlib8d1LP0f57Ubd8COFFjgFE5bls68fwk1f0hFjH0Vg==",
+        "ChomikSession": "34aa2c90-6db0-48c0-a62b-1e26cf75bdad",
+        "cookiesAccepted": "1"
+      },
+      "post_data": null,
+      "protocol": "HTTP",
+      "src_ip": "192.168.0.183",
+      "dst_ip": "172.67.42.83",
+      "responses": []
+    }
+  ]
+}{
+  "httpforever.com/": [
+    {
+      "timestamp": "2025-04-02 20:18:28",
+      "method": "GET",
+      "url": "httpforever.com/",
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept_Encoding": "gzip, deflate",
+        "Accept_Language": "pl,en-US;q=0.7,en;q=0.3",
+        "Connection": "keep-alive",
+        "Host": "httpforever.com",
+        "If_Modified_Since": "Wed, 22 Mar 2023 14:54:48 GMT",
+        "If_None_Match": "W/\"641b16b8-1404\"",
+        "Referer": "https://www.google.com/",
+        "Upgrade_Insecure_Requests": "1",
+        "User_Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Unknown_Headers": "{b'Priority': b'u=0, i'}",
+        "Http_Version": "HTTP/1.1"
+      },
+      "cookies": {},
+      "post_data": null,
+      "protocol": "HTTP",
+      "src_ip": "192.168.0.183",
+      "dst_ip": "146.190.62.39",
+      "responses": []
+    }
+  ],
+  "chomikuj.pl/": [
+    {
+      "timestamp": "2025-04-02 20:18:31",
+      "method": "GET",
+      "url": "chomikuj.pl/",
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept_Encoding": "gzip, deflate",
+        "Accept_Language": "pl,en-US;q=0.7,en;q=0.3",
+        "Connection": "keep-alive",
+        "Cookie": "guid=248b2518-9bad-4ce1-8330-6effed478c51; chTA=1; chAPC=1; RememberMe=9754818=1da14491a8d9bcb031a6dbaaf68f5955; rcid=6; __RequestVerificationToken_Lw__=dDJUuEas8dTlqESfEeAdwbKIxsbPwO/14Xogk7jGoh5JiZNTWl/kAF2piF0sw6ncc0cTTxo9lj2aahzUoRDsqSJ+URHlib8d1LP0f57Ubd8COFFjgFE5bls68fwk1f0hFjH0Vg==; ChomikSession=34aa2c90-6db0-48c0-a62b-1e26cf75bdad; cookiesAccepted=1",
+        "Host": "chomikuj.pl",
+        "Upgrade_Insecure_Requests": "1",
+        "User_Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Unknown_Headers": "{b'Priority': b'u=0, i'}",
+        "Http_Version": "HTTP/1.1"
+      },
+      "cookies": {
+        "guid": "248b2518-9bad-4ce1-8330-6effed478c51",
+        "chTA": "1",
+        "chAPC": "1",
+        "RememberMe": "9754818=1da14491a8d9bcb031a6dbaaf68f5955",
+        "rcid": "6",
+        "__RequestVerificationToken_Lw__": "dDJUuEas8dTlqESfEeAdwbKIxsbPwO/14Xogk7jGoh5JiZNTWl/kAF2piF0sw6ncc0cTTxo9lj2aahzUoRDsqSJ+URHlib8d1LP0f57Ubd8COFFjgFE5bls68fwk1f0hFjH0Vg==",
+        "ChomikSession": "34aa2c90-6db0-48c0-a62b-1e26cf75bdad",
+        "cookiesAccepted": "1"
+      },
+      "post_data": null,
+      "protocol": "HTTP",
+      "src_ip": "192.168.0.183",
+      "dst_ip": "172.67.42.83",
+      "responses": []
+    }
+  ],
+  "iwa.iplsc.com/iwa.js": [
+    {
+      "timestamp": "2025-04-02 20:18:32",
+      "method": "GET",
+      "url": "iwa.iplsc.com/iwa.js",
+      "headers": {
+        "Accept": "*/*",
+        "Accept_Encoding": "gzip, deflate",
+        "Accept_Language": "pl,en-US;q=0.7,en;q=0.3",
+        "Connection": "keep-alive",
+        "Host": "iwa.iplsc.com",
+        "If_Modified_Since": "Thu, 01 Jul 2021 10:33:18 GMT",
+        "Referer": "http://chomikuj.pl/",
+        "User_Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Http_Version": "HTTP/1.1"
+      },
+      "cookies": {},
+      "post_data": null,
+      "protocol": "HTTP",
+      "src_ip": "192.168.0.183",
+      "dst_ip": "217.74.71.132",
+      "responses": []
+    }
+  ]
+}
