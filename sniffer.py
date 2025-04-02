@@ -724,7 +724,7 @@ class NetworkSniffer:
             return False
 
     def start_session_browser(self):
-        """Uruchamia interaktywną przeglądarkę sesji"""
+        """Uruchamia interaktywną przeglądarkę sesji na porcie 8000"""
         print("Uruchamianie interaktywnej przeglądarki sesji na porcie 8000...")
 
         if not self.captured_data or len(self.captured_data) == 0:
@@ -737,6 +737,10 @@ class NetworkSniffer:
                 print("Nie udało się utworzyć aplikacji przeglądarki sesji.")
                 return False
 
+            # Importy do serwera HTTP
+            import http.server
+            import socketserver
+
             # Utwórz klasę obsługującą żądania HTTP
             class SessionBrowserHandler(http.server.SimpleHTTPRequestHandler):
                 def do_GET(self):
@@ -748,24 +752,6 @@ class NetworkSniffer:
                         self.end_headers()
                         with open('temp_session_data.json', 'rb') as f:
                             self.wfile.write(f.read())
-                        return
-                    elif self.path.startswith('/proxy/'):
-                        # Obsługa proxy dla odtwarzania żądań
-                        try:
-                            # Dekoduj URL, do którego ma być wysłane żądanie
-                            encoded_url = self.path[7:]  # usuń '/proxy/'
-                            target_url = urllib.parse.unquote(encoded_url)
-
-                            # Tu możesz dodać kod do odtwarzania żądań
-                            self.send_response(200)
-                            self.send_header('Content-type', 'text/html')
-                            self.end_headers()
-                            self.wfile.write(f"Próba odtworzenia żądania do {target_url}".encode())
-                        except Exception as e:
-                            self.send_response(500)
-                            self.send_header('Content-type', 'text/plain')
-                            self.end_headers()
-                            self.wfile.write(f"Błąd: {str(e)}".encode())
                         return
 
                     return http.server.SimpleHTTPRequestHandler.do_GET(self)
@@ -2337,12 +2323,11 @@ class NetworkSniffer:
             import http.server
             import socketserver
             import urllib.parse
-            import requests
 
             # Utwórz klasę obsługującą żądania HTTP z funkcją proxy
             class InteractiveSessionBrowserHandler(http.server.SimpleHTTPRequestHandler):
                 def __init__(self, *args, **kwargs):
-                    self.sniffer = kwargs.pop('sniffer', None)
+                    self.sniffer = kwargs.pop('sniffer', None)  # Extract sniffer reference
                     super().__init__(*args, **kwargs)
 
                 def do_GET(self):
@@ -2387,7 +2372,11 @@ class NetworkSniffer:
                                     self.end_headers()
 
                                     # Wyślij treść
-                                    self.wfile.write(response.get('content', '').encode('utf-8', errors='ignore'))
+                                    content = response.get('content', '')
+                                    if isinstance(content, str):
+                                        self.wfile.write(content.encode('utf-8', errors='ignore'))
+                                    else:
+                                        self.wfile.write(content)
                                 else:
                                     self.send_response(500)
                                     self.send_header('Content-type', 'text/plain')
@@ -2407,95 +2396,13 @@ class NetworkSniffer:
                             self.end_headers()
                             self.wfile.write(f"Błąd: {str(e)}".encode())
                         return
-                    elif self.path.startswith('/api/'):
-                        # Obsługa API dla przeglądarki sesji
-                        if self.path == '/api/analyze':
-                            try:
-                                # Przeprowadź analizę i zwróć wyniki
-                                results = self.sniffer.analyze_traffic() if self.sniffer else None
-
-                                self.send_response(200)
-                                self.send_header('Content-type', 'application/json')
-                                self.end_headers()
-
-                                import json
-                                if results:
-                                    self.wfile.write(json.dumps(results).encode())
-                                else:
-                                    self.wfile.write(
-                                        json.dumps({"error": "Nie udało się przeprowadzić analizy"}).encode())
-                            except Exception as e:
-                                self.send_response(500)
-                                self.send_header('Content-type', 'application/json')
-                                self.end_headers()
-                                import json
-                                self.wfile.write(json.dumps({"error": str(e)}).encode())
-                            return
 
                     return http.server.SimpleHTTPRequestHandler.do_GET(self)
-
-                def do_POST(self):
-                    if self.path.startswith('/api/replay'):
-                        content_length = int(self.headers['Content-Length'])
-                        post_data = self.rfile.read(content_length).decode('utf-8')
-
-                        try:
-                            import json
-                            replay_request = json.loads(post_data)
-
-                            url = replay_request.get('url')
-                            request_index = replay_request.get('requestIndex', 0)
-                            modifications = replay_request.get('modifications', {})
-
-                            # Pobierz dane sesji
-                            session_data = {}
-                            with open('temp_session_data.json', 'r') as f:
-                                session_data = json.load(f)
-
-                            if url in session_data and request_index < len(session_data[url]):
-                                # Pobierz dane żądania
-                                request_data = session_data[url][request_index]
-
-                                # Zastosuj modyfikacje jeśli istnieją
-                                if modifications and self.sniffer:
-                                    request_data = self.sniffer.modify_request_data(request_data, modifications)
-
-                                # Odtwórz żądanie
-                                if self.sniffer:
-                                    response = self.sniffer.replay_request(url, request_data)
-
-                                    self.send_response(200)
-                                    self.send_header('Content-type', 'application/json')
-                                    self.end_headers()
-
-                                    self.wfile.write(json.dumps(response).encode())
-                                else:
-                                    self.send_response(500)
-                                    self.send_header('Content-type', 'application/json')
-                                    self.end_headers()
-                                    self.wfile.write(json.dumps({"error": "Brak dostępu do obiektu sniffer"}).encode())
-                            else:
-                                self.send_response(404)
-                                self.send_header('Content-type', 'application/json')
-                                self.end_headers()
-                                self.wfile.write(json.dumps({"error": "Żądanie nie znalezione"}).encode())
-                        except Exception as e:
-                            import traceback
-                            traceback.print_exc()
-
-                            self.send_response(500)
-                            self.send_header('Content-type', 'application/json')
-                            self.end_headers()
-                            import json
-                            self.wfile.write(json.dumps({"error": str(e)}).encode())
-                        return
-
-                    self.send_response(404)
-                    self.end_headers()
 
             # Utwórz handler z referencją do obiektu sniffer
             handler = lambda *args, **kwargs: InteractiveSessionBrowserHandler(*args, sniffer=self, **kwargs)
 
+            # Uruchom serwer HTTP
             with socketserver.TCPServer(("", 8000), handler) as httpd:
                 print("Serwer interaktywnej przeglądarki uruchomiony na http://localhost:8000")
                 print("Otwórz przeglądarkę i przejdź do adresu: http://localhost:8000")
@@ -2534,7 +2441,9 @@ class NetworkSniffer:
             print(f"Błąd podczas uruchamiania interaktywnej przeglądarki sesji: {e}")
             import traceback
             traceback.print_exc()
-            return False
+            # Jeśli nie udało się uruchomić zaawansowanej przeglądarki, spróbuj utworzyć prostszą wersję statyczną
+            print("Próba utworzenia statycznej wersji przeglądarki...")
+            return self.create_simple_browser_fallback()
 
     def replay_specific_request(self):
         """Pozwala użytkownikowi wybrać i odtworzyć konkretne żądanie z przechwyconych danych"""
@@ -3882,9 +3791,9 @@ class NetworkSniffer:
             print("\nPrzeglądarka sesji:")
             print("1. Uruchom standardową przeglądarkę sesji")
             print("2. Uruchom interaktywną przeglądarkę sesji")
-            print("3. Odtwórz konkretne żądanie")
-            print("4. Symuluj całą sesję przeglądania")
-            print("5. Przeglądaj zrekonstruowane strony HTTP")
+            print("3. Uruchom interaktywne przeglądanie zapisanych stron")  # Nowa opcja
+            print("4. Odtwórz konkretne żądanie")
+            print("5. Symuluj całą sesję przeglądania")
             print("0. Powrót do menu głównego")
 
             try:
@@ -3905,17 +3814,17 @@ class NetworkSniffer:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "3":
                 if self.captured_data:
-                    self.replay_specific_request()
+                    self.interactive_session_browsing()  # Wywołanie nowej funkcji
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "4":
                 if self.captured_data:
-                    self.simulate_browsing_session()
+                    self.replay_specific_request()
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "5":
                 if self.captured_data:
-                    self.browse_reconstructed_pages()
+                    self.simulate_browsing_session()
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "0":
@@ -4657,74 +4566,91 @@ class NetworkSniffer:
 
         return filepath
 
-    def browse_reconstructed_pages(self):
-        """Umożliwia przeglądanie zrekonstruowanych stron HTTP w przeglądarce"""
+    def interactive_session_browsing(self):
+        """Umożliwia interaktywne przeglądanie zapisanych stron z nawigacją między nimi"""
         if not self.captured_data:
             print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             return False
 
         try:
-            # Filtruj tylko HTTP URLs (nie HTTPS)
-            http_urls = [url for url in self.captured_data.keys() if url.startswith('http://')]
+            import os
+            import json
+            from datetime import datetime
 
-            if not http_urls:
-                print("Nie znaleziono przechwyconych stron HTTP. Tylko strony HTTP mogą być zrekonstruowane.")
-                print("Strony HTTPS są szyfrowane i nie mogą być w pełni zrekonstruowane.")
+            # Generuj unikalną nazwę dla sesji przeglądania
+            session_id = f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            session_dir = f"browser_sessions/{session_id}"
+
+            # Utwórz katalogi do przechowywania zrekonstruowanych stron
+            os.makedirs(session_dir, exist_ok=True)
+
+            # Utwórz indeks stron dla bieżącej sesji
+            page_index = {}
+            url_to_file_map = {}
+
+            print("\nPrzygotowywanie danych do przeglądania interaktywnego...")
+
+            # Przygotuj wszystkie dostępne strony (najpierw HTTP, potem HTTPS)
+            all_urls = []
+            http_urls = [url for url in self.captured_data.keys() if url.startswith('http://')]
+            https_urls = [url for url in self.captured_data.keys() if url.startswith('https://')]
+            all_urls = http_urls + https_urls
+
+            if not all_urls:
+                print("Nie znaleziono przechwyconych stron.")
                 return False
 
-            # Wyświetl dostępne strony HTTP
-            print("\n=== Dostępne strony HTTP ===")
-            for i, url in enumerate(http_urls):
-                print(f"{i + 1}. {url} ({len(self.captured_data[url])} żądań)")
+            # Rekonstruuj wszystkie strony HTTP i przygotuj zastępcze strony dla HTTPS
+            for i, url in enumerate(all_urls):
+                is_https = url.startswith('https://')
+                requests = self.captured_data[url]
 
-            # Wybór strony
-            try:
-                choice = input("\nWybierz stronę do rekonstrukcji (numer) lub '0' aby wyjść: ")
-                if choice == '0':
-                    return False
-
-                url_index = int(choice) - 1
-                if url_index < 0 or url_index >= len(http_urls):
-                    print("Nieprawidłowy numer strony.")
-                    return False
-
-                selected_url = http_urls[url_index]
-                requests = self.captured_data[selected_url]
-
-                print(f"\nRekonstruowanie strony: {selected_url}...")
+                print(f"Przygotowywanie {i + 1}/{len(all_urls)}: {url}")
 
                 # Rekonstruuj stronę
-                html_content = self.reconstruct_html_page(selected_url, requests)
+                if is_https:
+                    # Dla HTTPS tworzymy placeholder z informacją o szyfrowaniu
+                    html_content = self._generate_https_placeholder(url, requests)
+                else:
+                    # Dla HTTP rekonstruujemy pełną stronę
+                    html_content = self.reconstruct_html_page(url, requests)
 
-                # Zapisz zrekonstruowaną stronę
-                filepath = self.save_reconstructed_page(selected_url, html_content)
+                # Dodaj skrypty do obsługi nawigacji między stronami
+                html_content = self._add_navigation_scripts(html_content, url, session_id)
 
-                print(f"Strona została zrekonstruowana i zapisana do pliku: {filepath}")
+                # Generuj nazwę pliku dla strony
+                filename = self._generate_filename_from_url(url)
+                filepath = os.path.join(session_dir, filename)
 
-                # Zapytaj, czy otworzyć w przeglądarce
-                open_browser = input("Czy chcesz otworzyć stronę w przeglądarce? (t/n): ").lower()
-                if open_browser in ['t', 'tak']:
-                    try:
-                        import webbrowser
-                        webbrowser.open('file://' + os.path.abspath(filepath))
-                        print("Strona została otwarta w przeglądarce.")
-                    except Exception as e:
-                        print(f"Nie udało się otworzyć przeglądarki: {e}")
-                        print(f"Możesz ręcznie otworzyć plik: {filepath}")
+                # Zapisz stronę do pliku
+                with open(filepath, 'w', encoding='utf-8', errors='ignore') as f:
+                    f.write(html_content)
 
-                # Zapytaj o rekonstrukcję kolejnej strony
-                continue_choice = input("\nCzy chcesz zrekonstruować inną stronę? (t/n): ").lower()
-                if continue_choice in ['t', 'tak']:
-                    return self.browse_reconstructed_pages()
+                # Dodaj do indeksu
+                page_index[url] = {
+                    'filepath': filepath,
+                    'is_https': is_https,
+                    'timestamp': requests[0].get('timestamp', 'unknown') if requests else 'unknown',
+                    'request_count': len(requests)
+                }
 
-                return True
+                url_to_file_map[url] = filepath
 
-            except ValueError:
-                print("Nieprawidłowy numer strony. Wprowadź liczbę.")
-                return False
+            # Zapisz indeks sesji
+            with open(os.path.join(session_dir, 'session_index.json'), 'w') as f:
+                json.dump({
+                    'session_id': session_id,
+                    'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'page_count': len(page_index),
+                    'pages': page_index
+                }, f, indent=2)
+
+            # Uruchom przeglądarkę z indeksem stron
+            self._launch_session_browser(session_dir, url_to_file_map)
+            return True
 
         except Exception as e:
-            print(f"Błąd podczas rekonstrukcji strony: {e}")
+            print(f"Błąd podczas tworzenia przeglądarki interaktywnej: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -4929,6 +4855,1085 @@ class NetworkSniffer:
             traceback.print_exc()
             return False
 
+    def _generate_https_placeholder(self, url, requests):
+        """Generuje stronę placeholder dla zaszyfrowanych stron HTTPS"""
+        base_domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
+
+        html = f"""<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>{base_domain} (HTTPS)</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; text-align: center; }}
+            .https-info {{ max-width: 600px; margin: 50px auto; padding: 20px; 
+                        border: 1px solid #ccc; border-radius: 5px; background: #f9f9f9; }}
+            h2 {{ color: #2196F3; }}
+            .lock-icon {{ font-size: 48px; color: #2196F3; margin-bottom: 20px; }}
+            .resource-list {{ text-align: left; margin-top: 20px; }}
+            .resource {{ padding: 5px; border-bottom: 1px solid #eee; }}
+            .nav-bar {{ background: #333; color: white; padding: 10px; display: flex; align-items: center; }}
+            .nav-button {{ margin-right: 10px; padding: 5px 10px; background: #555; border: none; color: white; cursor: pointer; }}
+            .url-display {{ flex-grow: 1; padding: 5px 10px; background: #444; border-radius: 3px; }}
+        </style>
+    </head>
+    <body>
+        <div class="nav-bar">
+            <button class="nav-button" id="backBtn">◀</button>
+            <button class="nav-button" id="forwardBtn">▶</button>
+            <button class="nav-button" id="homeBtn">🏠</button>
+            <div class="url-display">{url}</div>
+        </div>
+
+        <div class="https-info">
+            <div class="lock-icon">🔒</div>
+            <h2>Połączenie HTTPS</h2>
+            <p>Ta strona używa szyfrowanego połączenia HTTPS. Nie jest możliwe wyświetlenie jej rzeczywistej zawartości 
+               w przeglądarce sesji, ponieważ dane zostały zaszyfrowane.</p>
+            <p>Poniżej widoczne są przechwycone zasoby z tej strony.</p>
+            <hr>
+            <p><strong>URL:</strong> {url}</p>
+            <p><strong>Liczba zarejestrowanych żądań:</strong> {len(requests)}</p>
+
+            <div class="resource-list">
+                <h3>Przechwycone zasoby:</h3>
+    """
+
+        # Dodaj listę zasobów (maksymalnie 20)
+        resource_count = 0
+        for req in requests:
+            method = req.get('method', 'GET')
+            timestamp = req.get('timestamp', 'unknown')
+
+            html += f'<div class="resource">{method} - {timestamp}</div>\n'
+            resource_count += 1
+
+            if resource_count >= 20 and len(requests) > 20:
+                html += f'<div class="resource">... oraz {len(requests) - 20} więcej zasobów</div>\n'
+                break
+
+        html += """
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+        return html
+
+    def _generate_filename_from_url(self, url):
+        """Generuje odpowiednią nazwę pliku na podstawie URL"""
+        # Wyodrębnij domenę i ścieżkę
+        if '://' in url:
+            parts = url.split('://', 1)
+            protocol = parts[0]
+            domain_path = parts[1]
+        else:
+            protocol = 'http'
+            domain_path = url
+
+        # Rozdziel domenę i ścieżkę
+        if '/' in domain_path:
+            domain_parts = domain_path.split('/', 1)
+            domain = domain_parts[0]
+            path = domain_parts[1]
+        else:
+            domain = domain_path
+            path = ''
+
+        # Usuń parametry URL (wszystko po ?)
+        if '?' in path:
+            path = path.split('?', 1)[0]
+
+        # Usuń nielegalne znaki
+        for char in [':', '?', '&', '=', '#', '*', '"', "'", '<', '>', '|']:
+            path = path.replace(char, '_')
+
+        # Ogranicz długość ścieżki
+        if len(path) > 50:
+            path = path[:50]
+
+        # Dodaj rozszerzenie .html
+        if not path:
+            path = 'index'
+
+        # Unikalna nazwa bazująca na domenie i ścieżce
+        unique_id = str(hash(url) % 10000).zfill(4)  # 4-cyfrowy identyfikator
+        filename = f"{domain.replace('.', '_')}_{path.replace('/', '_')}_{unique_id}.html"
+
+        return filename
+
+    def _add_navigation_scripts(self, html_content, current_url, session_id):
+        """Dodaje skrypty JavaScript do nawigacji między stronami"""
+        nav_script = f"""
+    <script>
+    // Dane sesji
+    const sessionId = "{session_id}";
+    const currentUrl = "{current_url}";
+
+    // Historia przeglądania
+    let sessionHistory = [];
+    let currentHistoryPosition = -1;
+
+    // Załaduj historię z localStorage jeśli istnieje
+    function loadHistory() {{
+        const savedHistory = localStorage.getItem(`browser_session_${{sessionId}}`);
+        if (savedHistory) {{
+            try {{
+                const historyData = JSON.parse(savedHistory);
+                sessionHistory = historyData.history || [];
+                currentHistoryPosition = historyData.position || -1;
+            }} catch (e) {{
+                console.error('Błąd wczytywania historii:', e);
+                sessionHistory = [];
+                currentHistoryPosition = -1;
+            }}
+        }}
+
+        // Jeśli bieżący URL nie jest w historii lub rozpoczynamy nową sesję
+        if (sessionHistory.length === 0 || sessionHistory[currentHistoryPosition] !== currentUrl) {{
+            // Jeśli jesteśmy w środku historii, usuń wszystko po bieżącej pozycji
+            if (currentHistoryPosition >= 0 && currentHistoryPosition < sessionHistory.length - 1) {{
+                sessionHistory = sessionHistory.slice(0, currentHistoryPosition + 1);
+            }}
+
+            // Dodaj bieżący URL do historii
+            sessionHistory.push(currentUrl);
+            currentHistoryPosition = sessionHistory.length - 1;
+            saveHistory();
+        }}
+
+        updateNavButtons();
+    }}
+
+    // Zapisz historię do localStorage
+    function saveHistory() {{
+        try {{
+            localStorage.setItem(`browser_session_${{sessionId}}`, JSON.stringify({{
+                history: sessionHistory,
+                position: currentHistoryPosition
+            }}));
+        }} catch (e) {{
+            console.error('Błąd zapisywania historii:', e);
+        }}
+    }}
+
+    // Aktualizuj stan przycisków nawigacji
+    function updateNavButtons() {{
+        const backBtn = document.getElementById('backBtn');
+        const forwardBtn = document.getElementById('forwardBtn');
+
+        if (backBtn) {{
+            backBtn.disabled = currentHistoryPosition <= 0;
+        }}
+
+        if (forwardBtn) {{
+            forwardBtn.disabled = currentHistoryPosition >= sessionHistory.length - 1;
+        }}
+    }}
+
+    // Obsługa nawigacji wstecz
+    function goBack() {{
+        if (currentHistoryPosition > 0) {{
+            currentHistoryPosition--;
+            const url = sessionHistory[currentHistoryPosition];
+            saveHistory();
+            window.location.href = url.replace('http://', 'file:///{session_id}/').replace('https://', 'file:///{session_id}/');
+        }}
+    }}
+
+    // Obsługa nawigacji do przodu
+    function goForward() {{
+        if (currentHistoryPosition < sessionHistory.length - 1) {{
+            currentHistoryPosition++;
+            const url = sessionHistory[currentHistoryPosition];
+            saveHistory();
+            window.location.href = url.replace('http://', 'file:///{session_id}/').replace('https://', 'file:///{session_id}/');
+        }}
+    }}
+
+    // Przechwytuj kliknięcia na linki
+    document.addEventListener('DOMContentLoaded', function() {{
+        // Inicjalizacja historii
+        loadHistory();
+
+        // Obsługa przycisków nawigacji
+        const backBtn = document.getElementById('backBtn');
+        const forwardBtn = document.getElementById('forwardBtn');
+        const homeBtn = document.getElementById('homeBtn');
+
+        if (backBtn) backBtn.addEventListener('click', goBack);
+        if (forwardBtn) forwardBtn.addEventListener('click', goForward);
+        if (homeBtn) homeBtn.addEventListener('click', function() {{
+            window.location.href = 'session_index.html';
+        }});
+
+        // Przechwytuj kliknięcia na linki
+        document.addEventListener('click', function(e) {{
+            let target = e.target;
+            while (target && target.tagName !== 'A') {{
+                target = target.parentElement;
+            }}
+
+            if (target && target.href) {{
+                e.preventDefault();
+
+                // Dodaj bieżący URL do historii
+                if (currentHistoryPosition >= 0 && currentHistoryPosition < sessionHistory.length - 1) {{
+                    sessionHistory = sessionHistory.slice(0, currentHistoryPosition + 1);
+                }}
+
+                const clickedUrl = target.href;
+                sessionHistory.push(clickedUrl);
+                currentHistoryPosition = sessionHistory.length - 1;
+                saveHistory();
+
+                // Nawiguj do URL
+                if (clickedUrl.startsWith('http://') || clickedUrl.startsWith('https://')) {{
+                    // Przekieruj do odpowiedniego pliku w sesji
+                    const mappedUrl = clickedUrl.replace('http://', 'file:///{session_id}/').replace('https://', 'file:///{session_id}/');
+                    window.location.href = mappedUrl;
+                }} else {{
+                    // Bezpośredni link lokalny
+                    window.location.href = clickedUrl;
+                }}
+            }}
+        }});
+    }});
+    </script>
+    """
+
+        # Dodaj skrypt nawigacji przed </body> lub </html>
+        if '</body>' in html_content:
+            html_content = html_content.replace('</body>', nav_script + '</body>')
+        elif '</html>' in html_content:
+            html_content = html_content.replace('</html>', nav_script + '</body></html>')
+        else:
+            html_content += nav_script
+
+        return html_content
+
+    def _launch_session_browser(self, session_dir, url_to_file_map):
+        """Uruchamia przeglądarkę z indeksem stron sesji"""
+        # Utwórz stronę indeksu
+        index_html = self._create_session_index_page(session_dir, url_to_file_map)
+
+        # Zapisz indeks do pliku
+        index_path = os.path.join(session_dir, 'session_index.html')
+        with open(index_path, 'w', encoding='utf-8') as f:
+            f.write(index_html)
+
+        # Uruchom przeglądarkę
+        print(f"\nSesja przeglądania została przygotowana w: {session_dir}")
+
+        try:
+            import webbrowser
+            webbrowser.open('file://' + os.path.abspath(index_path))
+            print("Strona indeksu została otwarta w przeglądarce.")
+        except Exception as e:
+            print(f"Nie udało się automatycznie otworzyć przeglądarki: {e}")
+            print(f"Możesz ręcznie otworzyć plik: {index_path}")
+
+        return True
+
+    def _create_session_index_page(self, session_dir, url_to_file_map):
+        """Tworzy stronę indeksu sesji przeglądania"""
+        # Wczytaj indeks sesji
+        try:
+            with open(os.path.join(session_dir, 'session_index.json'), 'r') as f:
+                session_data = json.load(f)
+        except:
+            session_data = {
+                'session_id': os.path.basename(session_dir),
+                'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'page_count': len(url_to_file_map),
+                'pages': {}
+            }
+
+        # Grupuj strony według domen
+        domains = {}
+        for url, file_path in url_to_file_map.items():
+            # Wyodrębnij domenę
+            domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
+
+            if domain not in domains:
+                domains[domain] = []
+
+            # Dodaj informacje o stronie
+            page_info = session_data.get('pages', {}).get(url, {})
+            domains[domain].append({
+                'url': url,
+                'file_path': os.path.basename(file_path),
+                'is_https': url.startswith('https://'),
+                'timestamp': page_info.get('timestamp', 'unknown'),
+                'request_count': page_info.get('request_count', 0)
+            })
+
+        # Sortuj domeny według liczby stron (malejąco)
+        sorted_domains = sorted(domains.items(), key=lambda x: len(x[1]), reverse=True)
+
+        # Generuj HTML
+        html = f"""<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Sesja przeglądania - {session_data['session_id']}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }}
+            .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
+            .header {{ background: #333; color: white; padding: 20px; margin-bottom: 20px; }}
+            .domain-card {{ background: white; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); overflow: hidden; }}
+            .domain-header {{ background: #4CAF50; color: white; padding: 10px 20px; font-weight: bold; }}
+            .page-list {{ padding: 10px 20px; }}
+            .page-item {{ padding: 10px; border-bottom: 1px solid #eee; display: flex; align-items: center; }}
+            .page-item:last-child {{ border-bottom: none; }}
+            .page-item:hover {{ background: #f9f9f9; }}
+            .page-link {{ text-decoration: none; color: #333; flex-grow: 1; }}
+            .page-link:hover {{ text-decoration: underline; }}
+            .protocol-badge {{ display: inline-block; padding: 2px 5px; border-radius: 3px; font-size: 12px; margin-right: 10px; color: white; }}
+            .http {{ background: #E91E63; }}
+            .https {{ background: #2196F3; }}
+            .timestamp {{ font-size: 12px; color: #777; margin-right: 10px; }}
+            .request-count {{ font-size: 12px; background: #eee; padding: 2px 5px; border-radius: 3px; }}
+            .stats {{ background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }}
+            .stat-item {{ text-align: center; padding: 15px; }}
+            .stat-value {{ font-size: 24px; font-weight: bold; color: #4CAF50; margin-bottom: 5px; }}
+            .stat-label {{ font-size: 14px; color: #777; }}
+            .search-box {{ padding: 10px; margin-bottom: 20px; }}
+            .search-input {{ width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Sesja przeglądania</h1>
+            <p>Data utworzenia: {session_data['created_at']}</p>
+        </div>
+
+        <div class="container">
+            <div class="stats">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value">{session_data['page_count']}</div>
+                        <div class="stat-label">Przechwycone strony</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{len(domains)}</div>
+                        <div class="stat-label">Unikalne domeny</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{len([p for d in domains.values() for p in d if p['is_https']])}</div>
+                        <div class="stat-label">Strony HTTPS</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">{len([p for d in domains.values() for p in d if not p['is_https']])}</div>
+                        <div class="stat-label">Strony HTTP</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="search-box">
+                <input type="text" class="search-input" id="searchInput" placeholder="Szukaj URL...">
+            </div>
+
+    """
+
+        # Dodaj karty dla każdej domeny
+        for domain, pages in sorted_domains:
+            html += f"""
+            <div class="domain-card">
+                <div class="domain-header">{domain} ({len(pages)} stron)</div>
+                <div class="page-list">
+    """
+
+            # Sortuj strony według timestampa (jeśli dostępny)
+            sorted_pages = sorted(pages, key=lambda x: x['timestamp'] if x['timestamp'] != 'unknown' else '9999-99-99',
+                                  reverse=True)
+
+            for page in sorted_pages:
+                protocol_class = "https" if page['is_https'] else "http"
+                protocol_text = "HTTPS" if page['is_https'] else "HTTP"
+
+                html += f"""
+                    <div class="page-item">
+                        <span class="protocol-badge {protocol_class}">{protocol_text}</span>
+                        <a href="{page['file_path']}" class="page-link">{page['url']}</a>
+                        <span class="timestamp">{page['timestamp']}</span>
+                        <span class="request-count">{page['request_count']} żądań</span>
+                    </div>
+    """
+
+            html += """
+                </div>
+            </div>
+    """
+
+        # Dodaj skrypt wyszukiwania
+        html += """
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const searchInput = document.getElementById('searchInput');
+                    const pageItems = document.querySelectorAll('.page-item');
+                    const domainCards = document.querySelectorAll('.domain-card');
+
+                    searchInput.addEventListener('input', function() {
+                        const searchText = this.value.toLowerCase();
+
+                        // Dla każdej karty domeny
+                        domainCards.forEach(card => {
+                            let hasVisibleItems = false;
+
+                            // Sprawdź wszystkie elementy strony w tej karcie
+                            const items = card.querySelectorAll('.page-item');
+                            items.forEach(item => {
+                                const link = item.querySelector('.page-link');
+                                const url = link.textContent.toLowerCase();
+
+                                if (url.includes(searchText)) {
+                                    item.style.display = '';
+                                    hasVisibleItems = true;
+                                } else {
+                                    item.style.display = 'none';
+                                }
+                            });
+
+                            // Pokaż/ukryj całą kartę domeny
+                            card.style.display = hasVisibleItems ? '' : 'none';
+                        });
+                    });
+                });
+            </script>
+        </div>
+    </body>
+    </html>
+    """
+
+        return html
+
+    def reconstruct_html_page(self, url, requests):
+        """Rekonstruuje pełną stronę HTML na podstawie przechwyconych żądań
+
+        Args:
+            url (str): URL strony do rekonstrukcji
+            requests (list): Lista przechwyconych żądań dla tego URL
+
+        Returns:
+            str: Zrekonstruowany kod HTML strony
+        """
+        if not requests:
+            return f"<html><body><h1>Brak danych dla {url}</h1></body></html>"
+
+        # Znajdź główne żądanie HTML
+        main_request = None
+        html_content = None
+
+        for req in requests:
+            # Sprawdź nagłówki aby znaleźć odpowiedź HTML
+            headers = req.get('headers', {})
+            if isinstance(headers, dict):  # Upewnij się, że headers to słownik
+                content_type = headers.get('Content-Type', '')
+                if isinstance(content_type, str) and 'text/html' in content_type.lower():
+                    main_request = req
+                    # Sprawdź czy mamy treść odpowiedzi
+                    for response in req.get('responses', []):
+                        if 'content' in response:
+                            html_content = response['content']
+                            break
+                    break
+
+        # Jeśli nie znaleziono żądania HTML, użyj pierwszego żądania
+        if not main_request:
+            main_request = requests[0]
+
+        # Jeśli nie mamy treści HTML, wygeneruj zastępczą stronę
+        if not html_content:
+            base_domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>{base_domain}</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
+                    .header {{ background: #f5f5f5; padding: 15px; border-bottom: 1px solid #ddd; }}
+                    .content {{ padding: 20px; }}
+                    .request-info {{ margin-bottom: 20px; padding: 10px; border: 1px solid #eee; }}
+                    .resource {{ margin: 5px 0; padding: 8px; background: #f9f9f9; border-radius: 4px; }}
+                    .http {{ color: #e74c3c; }}
+                    .https {{ color: #27ae60; }}
+                    .nav-bar {{ background: #333; color: white; padding: 10px; display: flex; align-items: center; }}
+                    .nav-button {{ margin-right: 10px; padding: 5px 10px; background: #555; border: none; color: white; cursor: pointer; }}
+                    .url-display {{ flex-grow: 1; padding: 5px 10px; background: #444; border-radius: 3px; }}
+                </style>
+            </head>
+            <body>
+                <div class="nav-bar">
+                    <button class="nav-button" id="backBtn">◀</button>
+                    <button class="nav-button" id="forwardBtn">▶</button>
+                    <button class="nav-button" id="homeBtn">🏠</button>
+                    <div class="url-display">{url}</div>
+                </div>
+
+                <div class="header">
+                    <h2>Zrekonstruowana strona: {url}</h2>
+                    <p>Ta strona została zrekonstruowana na podstawie przechwyconych danych.</p>
+                </div>
+                <div class="content">
+                    <div class="request-info">
+                        <h3>Informacje o żądaniu</h3>
+                        <p><strong>URL:</strong> {url}</p>
+                        <p><strong>Metoda:</strong> {main_request.get('method', 'GET')}</p>
+                        <p><strong>Czas:</strong> {main_request.get('timestamp', 'nieznany')}</p>
+                    </div>
+            """
+
+            # Dodaj informacje o zasobach
+            resource_count = 0
+            html_content += "<h3>Powiązane zasoby</h3>"
+
+            for req in requests:
+                if req != main_request:
+                    req_url = req.get('url', url)
+                    protocol = "HTTPS" if req_url.startswith("https://") else "HTTP"
+                    protocol_class = "https" if protocol == "HTTPS" else "http"
+
+                    html_content += f"""
+                    <div class="resource">
+                        <span class="{protocol_class}">{protocol}</span> {req.get('method', 'GET')} {req_url}
+                    </div>
+                    """
+                    resource_count += 1
+
+                    # Ogranicz liczbę wyświetlanych zasobów
+                    if resource_count >= 20:
+                        html_content += f"<p>... oraz {len(requests) - 21} więcej zasobów</p>"
+                        break
+
+            html_content += """
+                </div>
+            </body>
+            </html>
+            """
+
+        # Dodaj skrypt do przechwytywania kliknięć i nawigacji
+        inject_script = """
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Przechwytuj kliknięcia
+            document.addEventListener('click', function(e) {
+                // Sprawdź czy kliknięto link
+                let target = e.target;
+                while (target && target.tagName !== 'A') {
+                    target = target.parentElement;
+                }
+
+                if (target && target.href) {
+                    console.log('Kliknięto link:', target.href);
+                    // Nawigacja będzie obsługiwana przez skrypt nawigacji
+                }
+            });
+
+            // Oznacz wszystkie linki
+            const links = document.querySelectorAll('a');
+            links.forEach(link => {
+                link.style.border = '1px dashed #3498db';
+                link.style.padding = '2px 4px';
+                link.setAttribute('title', 'Kliknij, aby przejść do: ' + link.href);
+            });
+        });
+        </script>
+        """
+
+        # Dodaj skrypt do kodu HTML
+        if '</body>' in html_content:
+            html_content = html_content.replace('</body>', inject_script + '</body>')
+        elif '</html>' in html_content:
+            html_content = html_content.replace('</html>', inject_script + '</body></html>')
+        else:
+            html_content += inject_script
+
+        return html_content
+
+    def browse_captured_pages(self):
+        """Tworzy statyczne pliki HTML do przeglądania przechwyconych stron i uruchamia przeglądarkę"""
+        if not self.captured_data:
+            print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return False
+
+        try:
+            import os
+            import json
+            from datetime import datetime
+            import webbrowser
+            import shutil
+
+            # Utwórz katalog dla przeglądarki, jeśli nie istnieje
+            browser_dir = "captured_browser"
+            if os.path.exists(browser_dir):
+                shutil.rmtree(browser_dir)  # Usuń istniejący katalog, aby uniknąć konfliktów
+            os.makedirs(browser_dir)
+
+            # Utwórz katalog dla stron
+            pages_dir = os.path.join(browser_dir, "pages")
+            os.makedirs(pages_dir)
+
+            # Przygotuj dane indeksu
+            index_data = {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "total_urls": len(self.captured_data),
+                "total_requests": sum(len(reqs) for reqs in self.captured_data.values()),
+                "pages": []
+            }
+
+            print(f"\nGenerowanie {len(self.captured_data)} stron HTML...")
+
+            # Przetwórz wszystkie URL
+            for i, (url, requests) in enumerate(self.captured_data.items()):
+                if not requests:
+                    continue  # Pomijaj URL bez żądań
+
+                # Generuj nazwę pliku na podstawie URL
+                safe_filename = self._get_safe_filename(url)
+                page_filename = f"page_{i + 1}_{safe_filename}.html"
+                page_path = os.path.join(pages_dir, page_filename)
+
+                # Dodaj stronę do indeksu
+                index_data["pages"].append({
+                    "url": url,
+                    "is_https": url.startswith("https://"),
+                    "requests": len(requests),
+                    "filename": page_filename,
+                    "method": requests[0].get("method", "GET") if requests else "GET",
+                    "timestamp": requests[0].get("timestamp", "unknown") if requests else "unknown"
+                })
+
+                # Generuj zawartość strony HTML
+                page_html = self._generate_page_html(url, requests, i + 1, len(self.captured_data))
+
+                # Zapisz stronę
+                with open(page_path, "w", encoding="utf-8", errors="ignore") as f:
+                    f.write(page_html)
+
+                # Pokaż postęp
+                print(f"Wygenerowano stronę {i + 1}/{len(self.captured_data)}: {url}")
+
+            # Wygeneruj plik indeksu
+            index_path = os.path.join(browser_dir, "index.html")
+            index_html = self._generate_index_html(index_data)
+
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write(index_html)
+
+            print(f"\nWygenerowano przeglądarkę stron w katalogu: {browser_dir}")
+            print(f"Otwieram przeglądarkę z indeksem stron...")
+
+            # Otwórz przeglądarkę z indeksem
+            try:
+                webbrowser.open(f"file://{os.path.abspath(index_path)}")
+                print("Przeglądarka została uruchomiona.")
+            except Exception as e:
+                print(f"Nie udało się automatycznie otworzyć przeglądarki: {e}")
+                print(f"Możesz ręcznie otworzyć plik: {index_path}")
+
+            return True
+
+        except Exception as e:
+            print(f"Błąd podczas tworzenia przeglądarki stron: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _get_safe_filename(self, url):
+        """Konwertuje URL na bezpieczną nazwę pliku"""
+        # Usuń protokół
+        if "://" in url:
+            url = url.split("://", 1)[1]
+
+        # Ogranicz długość
+        if len(url) > 50:
+            url = url[:50]
+
+        # Zamień niebezpieczne znaki
+        for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '.']:
+            url = url.replace(char, '_')
+
+        return url
+
+    def _generate_page_html(self, url, requests, page_num, total_pages):
+        """Generuje kod HTML dla pojedynczej strony"""
+        is_https = url.startswith("https://")
+
+        # Podstawowe informacje
+        page_title = f"{'🔒 ' if is_https else ''}Strona {page_num}/{total_pages}: {url}"
+
+        # Budujemy HTML z krótszych fragmentów, aby uniknąć problemów z potrójnymi cudzysłowami
+        html = "<!DOCTYPE html>\n<html>\n<head>\n"
+        html += f"    <meta charset=\"UTF-8\">\n"
+        html += f"    <title>{page_title}</title>\n"
+
+        # Style CSS
+        html += "    <style>\n"
+        html += "        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }\n"
+        html += "        .nav-bar { background: #333; color: white; padding: 10px; display: flex; align-items: center; position: sticky; top: 0; z-index: 100; }\n"
+        html += "        .nav-button { margin-right: 10px; padding: 5px 10px; background: #555; border: none; color: white; cursor: pointer; border-radius: 3px; }\n"
+        html += "        .nav-button:hover { background: #777; }\n"
+        html += "        .url-display { flex-grow: 1; padding: 8px 15px; background: #444; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n"
+        html += "        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }\n"
+        html += "        .header { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n"
+        html += "        .https-notice { background: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin-bottom: 20px; }\n"
+        html += "        .request-card { background: white; padding: 15px; margin-bottom: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n"
+        html += "        .request-header { display: flex; justify-content: space-between; margin-bottom: 10px; }\n"
+        html += "        .method { display: inline-block; padding: 3px 8px; border-radius: 3px; font-weight: bold; }\n"
+        html += "        .get { background: #e7f3fe; color: #0c5460; }\n"
+        html += "        .post { background: #d4edda; color: #155724; }\n"
+        html += "        .request-details { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }\n"
+        html += "        .show-details { background: #f8f9fa; border: 1px solid #ddd; padding: 5px 10px; border-radius: 3px; cursor: pointer; }\n"
+        html += "        .show-details:hover { background: #e9ecef; }\n"
+        html += "        table { width: 100%; border-collapse: collapse; margin: 10px 0; }\n"
+        html += "        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }\n"
+        html += "        th { background: #f2f2f2; }\n"
+        html += "        .timestamp { color: #6c757d; font-size: 14px; }\n"
+        html += "        .content-section { white-space: pre-wrap; overflow-x: auto; background: #f8f9fa; padding: 10px; border-radius: 3px; max-height: 300px; overflow-y: auto; }\n"
+        html += "    </style>\n"
+        html += "</head>\n<body>\n"
+
+        # Pasek nawigacji
+        html += "    <div class=\"nav-bar\">\n"
+        html += "        <button class=\"nav-button\" onclick=\"window.location.href='../index.html'\">⬅️ Powrót</button>\n"
+        html += "        <button class=\"nav-button\" onclick=\"window.history.back()\">◀ Wstecz</button>\n"
+        html += "        <button class=\"nav-button\" onclick=\"window.history.forward()\">▶ Dalej</button>\n"
+        html += f"        <div class=\"url-display\">{url}</div>\n"
+        html += "    </div>\n"
+
+        # Kontener główny
+        html += "    <div class=\"container\">\n"
+        html += "        <div class=\"header\">\n"
+        html += f"            <h1>{page_title}</h1>\n"
+        html += f"            <p>Liczba przechwyconych żądań: <strong>{len(requests)}</strong></p>\n"
+
+        # Informacja o timestamp pierwszego żądania
+        timestamp = requests[0].get('timestamp', 'nieznany') if requests else 'nieznany'
+        html += f"            <p>Pierwsze żądanie: <span class=\"timestamp\">{timestamp}</span></p>\n"
+        html += "        </div>\n"
+
+        # Dodaj informację o HTTPS jeśli dotyczy
+        if is_https:
+            html += "        <div class=\"https-notice\">\n"
+            html += "            <h3>🔒 To jest strona HTTPS</h3>\n"
+            html += "            <p>Ta strona używa szyfrowanego połączenia HTTPS. Rzeczywista zawartość strony nie mogła zostać przechwycona ze względu na szyfrowanie.</p>\n"
+            html += "            <p>Poniżej przedstawiono przechwycone żądania związane z tą stroną.</p>\n"
+            html += "        </div>\n"
+
+        # Nagłówek dla sekcji żądań
+        html += "        <h2>Przechwycone żądania</h2>\n"
+
+        # Dodaj szczegóły każdego żądania
+        for i, req in enumerate(requests):
+            method = req.get('method', 'GET')
+            method_class = method.lower() if method.lower() in ['get', 'post'] else 'get'
+            timestamp = req.get('timestamp', 'nieznany')
+
+            html += f"        <div class=\"request-card\" id=\"request-{i + 1}\">\n"
+            html += "            <div class=\"request-header\">\n"
+            html += "                <div>\n"
+            html += f"                    <span class=\"method {method_class}\">{method}</span>\n"
+            html += f"                    <strong>{url}</strong>\n"
+            html += "                </div>\n"
+            html += f"                <span class=\"timestamp\">{timestamp}</span>\n"
+            html += "            </div>\n"
+            html += f"            <button class=\"show-details\" onclick=\"toggleDetails('details-{i + 1}')\">Pokaż szczegóły</button>\n"
+            html += f"            <div class=\"request-details\" id=\"details-{i + 1}\">\n"
+
+            # Dodaj nagłówki żądania
+            headers = req.get('headers', {})
+            if headers and isinstance(headers, dict):
+                html += "                <h3>Nagłówki żądania</h3>\n"
+                html += "                <table>\n"
+                html += "                    <tr>\n"
+                html += "                        <th>Nagłówek</th>\n"
+                html += "                        <th>Wartość</th>\n"
+                html += "                    </tr>\n"
+
+                for key, value in headers.items():
+                    html += f"                    <tr>\n"
+                    html += f"                        <td>{key}</td>\n"
+                    html += f"                        <td>{value}</td>\n"
+                    html += f"                    </tr>\n"
+
+                html += "                </table>\n"
+
+            # Dodaj ciasteczka
+            cookies = req.get('cookies', {})
+            if cookies and isinstance(cookies, dict):
+                html += "                <h3>Ciasteczka</h3>\n"
+                html += "                <table>\n"
+                html += "                    <tr>\n"
+                html += "                        <th>Nazwa</th>\n"
+                html += "                        <th>Wartość</th>\n"
+                html += "                    </tr>\n"
+
+                for key, value in cookies.items():
+                    html += f"                    <tr>\n"
+                    html += f"                        <td>{key}</td>\n"
+                    html += f"                        <td>{value}</td>\n"
+                    html += f"                    </tr>\n"
+
+                html += "                </table>\n"
+
+            # Dodaj dane POST
+            post_data = req.get('post_data')
+            if post_data:
+                html += "                <h3>Dane POST</h3>\n"
+                html += f"                <div class=\"content-section\">{post_data}</div>\n"
+
+            # Dodaj odpowiedzi
+            responses = req.get('responses', [])
+            if responses and isinstance(responses, list):
+                html += f"                <h3>Odpowiedzi ({len(responses)})</h3>\n"
+
+                for j, resp in enumerate(responses):
+                    resp_timestamp = resp.get('timestamp', 'nieznany')
+                    resp_headers = resp.get('headers', {})
+                    resp_content = resp.get('content', '')
+
+                    html += "                <div style=\"border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 3px;\">\n"
+                    html += f"                    <h4>Odpowiedź #{j + 1} <span class=\"timestamp\">({resp_timestamp})</span></h4>\n"
+
+                    # Nagłówki odpowiedzi
+                    if resp_headers and isinstance(resp_headers, dict):
+                        html += "                    <h5>Nagłówki odpowiedzi</h5>\n"
+                        html += "                    <table>\n"
+                        html += "                        <tr>\n"
+                        html += "                            <th>Nagłówek</th>\n"
+                        html += "                            <th>Wartość</th>\n"
+                        html += "                        </tr>\n"
+
+                        for key, value in resp_headers.items():
+                            html += f"                        <tr>\n"
+                            html += f"                            <td>{key}</td>\n"
+                            html += f"                            <td>{value}</td>\n"
+                            html += f"                        </tr>\n"
+
+                        html += "                    </table>\n"
+
+                    # Treść odpowiedzi (ograniczona do 2000 znaków)
+                    if resp_content:
+                        if isinstance(resp_content, str):
+                            # Ogranicz długość wyświetlanej treści
+                            display_content = resp_content[:2000]
+                            if len(resp_content) > 2000:
+                                display_content += "... [obcięto ze względu na długość]"
+
+                            html += "                        <h5>Treść odpowiedzi</h5>\n"
+                            html += f"                        <div class=\"content-section\">{display_content}</div>\n"
+
+                    html += "                </div>\n"
+
+            html += "            </div>\n"
+            html += "        </div>\n"
+
+        # Dodaj skrypt JavaScript na końcu strony
+        html += "    </div>\n"
+        html += "    <script>\n"
+        html += "        function toggleDetails(id) {\n"
+        html += "            const details = document.getElementById(id);\n"
+        html += "            const isVisible = details.style.display === 'block';\n"
+        html += "            details.style.display = isVisible ? 'none' : 'block';\n"
+        html += "            \n"
+        html += "            // Zmień tekst przycisku\n"
+        html += "            const button = event.target;\n"
+        html += "            button.textContent = isVisible ? 'Pokaż szczegóły' : 'Ukryj szczegóły';\n"
+        html += "        }\n"
+        html += "    </script>\n"
+        html += "</body>\n</html>"
+
+        return html
+
+    def _generate_index_html(self, index_data):
+        """Generuje kod HTML dla strony indeksu"""
+        # Pogrupuj strony według domen
+        domains = {}
+        for page in index_data["pages"]:
+            url = page["url"]
+            domain = url.split("://", 1)[1].split("/", 1)[0] if "://" in url else url
+
+            if domain not in domains:
+                domains[domain] = []
+
+            domains[domain].append(page)
+
+        # Posortuj domeny według liczby stron (malejąco)
+        sorted_domains = sorted(domains.items(), key=lambda x: len(x[1]), reverse=True)
+
+        # Budujemy HTML z krótszych fragmentów
+        html = "<!DOCTYPE html>\n<html>\n<head>\n"
+        html += "    <meta charset=\"UTF-8\">\n"
+        html += "    <title>Przeglądarka zapisanych stron</title>\n"
+
+        # Style CSS
+        html += "    <style>\n"
+        html += "        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }\n"
+        html += "        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }\n"
+        html += "        .header { background: #333; color: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; }\n"
+        html += "        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }\n"
+        html += "        .stat-card { background: white; padding: 15px; border-radius: 5px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n"
+        html += "        .stat-value { font-size: 24px; font-weight: bold; color: #2196F3; margin-bottom: 5px; }\n"
+        html += "        .stat-label { color: #777; }\n"
+        html += "        .domain-card { background: white; margin-bottom: 20px; border-radius: 5px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n"
+        html += "        .domain-header { background: #4CAF50; color: white; padding: 10px 20px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }\n"
+        html += "        .page-list { max-height: 300px; overflow-y: auto; }\n"
+        html += "        .page-item { padding: 10px 20px; border-bottom: 1px solid #eee; display: flex; align-items: center; }\n"
+        html += "        .page-item:hover { background: #f9f9f9; }\n"
+        html += "        .page-item:last-child { border-bottom: none; }\n"
+        html += "        .page-link { color: #333; text-decoration: none; flex-grow: 1; }\n"
+        html += "        .page-link:hover { text-decoration: underline; }\n"
+        html += "        .protocol { display: inline-block; padding: 3px 6px; border-radius: 3px; font-size: 12px; margin-right: 10px; color: white; }\n"
+        html += "        .http { background: #E91E63; }\n"
+        html += "        .https { background: #2196F3; }\n"
+        html += "        .method { display: inline-block; padding: 2px 5px; border-radius: 3px; font-size: 11px; margin-right: 10px; }\n"
+        html += "        .get { background: #e7f3fe; color: #0c5460; }\n"
+        html += "        .post { background: #d4edda; color: #155724; }\n"
+        html += "        .timestamp { font-size: 12px; color: #999; margin-left: 10px; }\n"
+        html += "        .search-box { padding: 10px; background: white; border-radius: 5px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n"
+        html += "        .search-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }\n"
+        html += "        .count-badge { background: #eee; padding: 2px 5px; border-radius: 10px; font-size: 12px; }\n"
+        html += "        .toggle-button { background: none; border: none; color: white; cursor: pointer; font-size: 16px; }\n"
+        html += "    </style>\n"
+        html += "</head>\n<body>\n"
+
+        # Nagłówek
+        html += "    <div class=\"header\">\n"
+        html += "        <h1>Przeglądarka zapisanych stron</h1>\n"
+        html += f"        <p>Data wygenerowania: {index_data['timestamp']}</p>\n"
+        html += "    </div>\n"
+
+        # Kontener główny
+        html += "    <div class=\"container\">\n"
+
+        # Statystyki
+        html += "        <div class=\"stats\">\n"
+        html += "            <div class=\"stat-card\">\n"
+        html += f"                <div class=\"stat-value\">{index_data['total_urls']}</div>\n"
+        html += "                <div class=\"stat-label\">Zapisane URL</div>\n"
+        html += "            </div>\n"
+        html += "            <div class=\"stat-card\">\n"
+        html += f"                <div class=\"stat-value\">{index_data['total_requests']}</div>\n"
+        html += "                <div class=\"stat-label\">Przechwycone żądania</div>\n"
+        html += "            </div>\n"
+        html += "            <div class=\"stat-card\">\n"
+        html += f"                <div class=\"stat-value\">{len(domains)}</div>\n"
+        html += "                <div class=\"stat-label\">Unikalne domeny</div>\n"
+        html += "            </div>\n"
+        html += "            <div class=\"stat-card\">\n"
+        html += f"                <div class=\"stat-value\">{len([p for p in index_data['pages'] if p['is_https']])}</div>\n"
+        html += "                <div class=\"stat-label\">HTTPS</div>\n"
+        html += "            </div>\n"
+        html += "            <div class=\"stat-card\">\n"
+        html += f"                <div class=\"stat-value\">{len([p for p in index_data['pages'] if not p['is_https']])}</div>\n"
+        html += "                <div class=\"stat-label\">HTTP</div>\n"
+        html += "            </div>\n"
+        html += "        </div>\n"
+
+        # Wyszukiwarka
+        html += "        <div class=\"search-box\">\n"
+        html += "            <input type=\"text\" id=\"searchInput\" class=\"search-input\" placeholder=\"Wyszukaj URL...\">\n"
+        html += "        </div>\n"
+
+        # Dodaj sekcje dla każdej domeny
+        for domain, pages in sorted_domains:
+            html += "        <div class=\"domain-card\">\n"
+            html += "            <div class=\"domain-header\">\n"
+            html += f"                <span>{domain}</span>\n"
+            html += f"                <span class=\"count-badge\">{len(pages)} stron</span>\n"
+            html += f"                <button class=\"toggle-button\" onclick=\"toggleDomain('{domain.replace('.', '_')}')\">[+/-]</button>\n"
+            html += "            </div>\n"
+            html += f"            <div class=\"page-list\" id=\"domain_{domain.replace('.', '_')}\">\n"
+
+            # Sortuj strony według timestampa (jeśli dostępny)
+            sorted_pages = sorted(pages, key=lambda x: x.get("timestamp", ""), reverse=True)
+
+            for page in sorted_pages:
+                protocol_class = "https" if page["is_https"] else "http"
+                protocol_text = "HTTPS" if page["is_https"] else "HTTP"
+                method = page.get("method", "GET")
+                method_class = method.lower() if method.lower() in ['get', 'post'] else 'get'
+
+                html += "                <div class=\"page-item\">\n"
+                html += f"                    <span class=\"protocol {protocol_class}\">{protocol_text}</span>\n"
+                html += f"                    <span class=\"method {method_class}\">{method}</span>\n"
+                html += f"                    <a href=\"pages/{page['filename']}\" class=\"page-link\">{page['url']}</a>\n"
+                html += f"                    <span class=\"timestamp\">{page['timestamp']}</span>\n"
+                html += f"                    <span class=\"count-badge\">{page['requests']} żądań</span>\n"
+                html += "                </div>\n"
+
+            html += "            </div>\n"
+            html += "        </div>\n"
+
+        # Dodaj skrypt JavaScript
+        html += "        <script>\n"
+        html += "            // Funkcja wyszukiwania\n"
+        html += "            document.addEventListener('DOMContentLoaded', function() {\n"
+        html += "                const searchInput = document.getElementById('searchInput');\n"
+        html += "                const pageItems = document.querySelectorAll('.page-item');\n"
+        html += "                const domainCards = document.querySelectorAll('.domain-card');\n"
+        html += "                \n"
+        html += "                searchInput.addEventListener('input', function() {\n"
+        html += "                    const searchText = this.value.toLowerCase();\n"
+        html += "                    \n"
+        html += "                    // Dla każdej karty domeny\n"
+        html += "                    domainCards.forEach(card => {\n"
+        html += "                        let hasVisibleItems = false;\n"
+        html += "                        \n"
+        html += "                        // Sprawdź wszystkie strony w tej domenie\n"
+        html += "                        const items = card.querySelectorAll('.page-item');\n"
+        html += "                        items.forEach(item => {\n"
+        html += "                            const link = item.querySelector('.page-link');\n"
+        html += "                            const url = link.textContent.toLowerCase();\n"
+        html += "                            \n"
+        html += "                            if (url.includes(searchText)) {\n"
+        html += "                                item.style.display = '';\n"
+        html += "                                hasVisibleItems = true;\n"
+        html += "                            } else {\n"
+        html += "                                item.style.display = 'none';\n"
+        html += "                            }\n"
+        html += "                        });\n"
+        html += "                        \n"
+        html += "                        // Pokaż/ukryj całą kartę domeny\n"
+        html += "                        card.style.display = hasVisibleItems ? '' : 'none';\n"
+        html += "                    });\n"
+        html += "                });\n"
+        html += "            });\n"
+        html += "            \n"
+        html += "            // Funkcja zwijania/rozwijania domeny\n"
+        html += "            function toggleDomain(domainId) {\n"
+        html += "                const domainList = document.getElementById('domain_' + domainId);\n"
+        html += "                const isVisible = domainList.style.display !== 'none';\n"
+        html += "                domainList.style.display = isVisible ? 'none' : 'block';\n"
+        html += "                \n"
+        html += "                // Zmień tekst przycisku\n"
+        html += "                const button = event.target;\n"
+        html += "                button.textContent = isVisible ? '[+]' : '[-]';\n"
+        html += "            }\n"
+        html += "        </script>\n"
+        html += "    </div>\n"
+        html += "</body>\n</html>"
+
+        return html
+
+    def _get_safe_filename(self, url):
+        """Konwertuje URL na bezpieczną nazwę pliku"""
+        # Usuń protokół
+        if "://" in url:
+            url = url.split("://", 1)[1]
+
+        # Ogranicz długość
+        if len(url) > 50:
+            url = url[:50]
+
+        # Zamień niebezpieczne znaki
+        for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '.']:
+            url = url.replace(char, '_')
 
 # Uruchomienie programu
 if __name__ == "__main__":
