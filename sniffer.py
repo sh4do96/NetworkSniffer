@@ -740,6 +740,70 @@ class NetworkSniffer:
             # Utwórz klasę obsługującą żądania HTTP
             class SessionBrowserHandler(http.server.SimpleHTTPRequestHandler):
                 def do_GET(self):
+                    if self.path == '/':
+                        self.path = '/session_browser_app.html'
+                    elif self.path == '/data':
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        with open('temp_session_data.json', 'rb') as f:
+                            self.wfile.write(f.read())
+                        return
+                    elif self.path.startswith('/proxy/'):
+                        # Obsługa proxy dla odtwarzania żądań
+                        try:
+                            # Dekoduj URL, do którego ma być wysłane żądanie
+                            encoded_url = self.path[7:]  # usuń '/proxy/'
+                            target_url = urllib.parse.unquote(encoded_url)
+
+                            # Tu możesz dodać kod do odtwarzania żądań
+                            self.send_response(200)
+                            self.send_header('Content-type', 'text/html')
+                            self.end_headers()
+                            self.wfile.write(f"Próba odtworzenia żądania do {target_url}".encode())
+                        except Exception as e:
+                            self.send_response(500)
+                            self.send_header('Content-type', 'text/plain')
+                            self.end_headers()
+                            self.wfile.write(f"Błąd: {str(e)}".encode())
+                        return
+
+                    return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+            # Uruchom serwer HTTP
+            handler = SessionBrowserHandler
+            with socketserver.TCPServer(("", 8000), handler) as httpd:
+                print("Serwer uruchomiony na http://localhost:8000")
+                print("Otwórz przeglądarkę i przejdź do adresu: http://localhost:8000")
+                print("Naciśnij Ctrl+C, aby zatrzymać serwer")
+
+                try:
+                    # Otwórz przeglądarkę
+                    try:
+                        import webbrowser
+                        webbrowser.open("http://localhost:8000")
+                    except Exception as e:
+                        print(f"Nie udało się automatycznie otworzyć przeglądarki: {e}")
+
+                    # Uruchom serwer
+                    httpd.serve_forever()
+                except KeyboardInterrupt:
+                    print("\nZatrzymywanie serwera...")
+                except Exception as e:
+                    print(f"\nBłąd podczas działania serwera: {e}")
+                finally:
+                    try:
+                        httpd.shutdown()
+                    except:
+                        pass
+                    # Usuń pliki tymczasowe
+                    for temp_file in ['temp_session_data.json', 'session_browser_app.html']:
+                        try:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                        except Exception as e:
+                            print(f"Nie udało się usunąć pliku {temp_file}: {e}")
+                    print("Serwer zatrzymany.")
                     return True
 
         except Exception as e:
@@ -3821,7 +3885,6 @@ class NetworkSniffer:
             print("3. Odtwórz konkretne żądanie")
             print("4. Symuluj całą sesję przeglądania")
             print("5. Przeglądaj zrekonstruowane strony HTTP")
-            print("6. Utwórz statyczną przeglądarkę HTML (fallback)")
             print("0. Powrót do menu głównego")
 
             try:
@@ -3837,29 +3900,7 @@ class NetworkSniffer:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "2":
                 if self.captured_data:
-                    try:
-                        # Najpierw sprawdź i napraw dane
-                        print("Sprawdzanie i przygotowywanie danych sesji...")
-                        if self.handle_session_data_errors():
-                            result = self.start_interactive_session_browser()
-                            if not result:
-                                print("\nWystąpił problem z uruchomieniem interaktywnej przeglądarki.")
-                                fallback_choice = input(
-                                    "Czy chcesz użyć alternatywnej statycznej przeglądarki? (t/n): ").lower()
-                                if fallback_choice in ['t', 'tak']:
-                                    self.create_simple_browser_fallback()
-                        else:
-                            print("Nie udało się poprawić danych sesji.")
-                            print("Spróbuj wczytać dane z innego pliku lub przechwycić ruch ponownie.")
-                    except Exception as e:
-                        print(f"\nWystąpił nieoczekiwany błąd: {e}")
-                        import traceback
-                        traceback.print_exc()
-
-                        fallback_choice = input(
-                            "Czy chcesz użyć alternatywnej statycznej przeglądarki? (t/n): ").lower()
-                        if fallback_choice in ['t', 'tak']:
-                            self.create_simple_browser_fallback()
+                    self.start_interactive_session_browser()
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "3":
@@ -3877,15 +3918,10 @@ class NetworkSniffer:
                     self.browse_reconstructed_pages()
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
-            elif choice == "6":
-                if self.captured_data:
-                    self.create_simple_browser_fallback()
-                else:
-                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "0":
                 break
             else:
-                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 6.")
+                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 5.")
 
     def show_data_management_menu(self):
         """Wyświetla menu zarządzania danymi"""
