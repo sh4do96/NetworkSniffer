@@ -29,6 +29,35 @@ class NetworkSniffer:
         self._test_scapy_imports()
         self.enable_ip_forwarding()
 
+    def start_session_browser(self):
+        """Uruchamia przeglądarkę sesji"""
+        print("\n==== Menu przeglądarki sesji ====")
+        print("1. Uruchom podstawową przeglądarkę sesji")
+        print("2. Uruchom ulepszoną przeglądarkę z nawigacją")
+
+        try:
+            choice = input("\nWybierz opcję (1/2): ").strip()
+
+            if choice == "1":
+                # Uruchom oryginalną implementację przeglądarki sesji
+                self._start_basic_session_browser()
+            elif choice == "2":
+                # Uruchom ulepszoną przeglądarkę
+                self.start_enhanced_session_browser()
+            else:
+                print("Nieprawidłowy wybór. Wracam do menu głównego.")
+                return False
+
+            return True
+        except KeyboardInterrupt:
+            print("\nPrzerwano uruchamianie przeglądarki sesji.")
+            return False
+        except Exception as e:
+            print(f"Błąd podczas uruchamiania przeglądarki sesji: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def get_full_html_content(self, url):
         """
         Próbuje zebrać pełną zawartość HTML dla danego URL
@@ -724,7 +753,7 @@ class NetworkSniffer:
 
             return False
 
-    def start_session_browser(self):
+    def _start_basic_session_browser(self):
         """Uruchamia przeglądarkę sesji"""
         print("Uruchamianie przeglądarki sesji na porcie 8000...")
 
@@ -1150,6 +1179,631 @@ class NetworkSniffer:
             traceback.print_exc()
             return False
 
+    def start_enhanced_session_browser(self):
+        """Uruchamia udoskonaloną przeglądarkę sesji na porcie 8000 z możliwością nawigacji jak na oryginalnym urządzeniu"""
+        print("Uruchamianie ulepszonej przeglądarki sesji na porcie 8000...")
+
+        if not self.captured_data or len(self.captured_data) == 0:
+            print("Błąd: Brak danych do wyświetlenia.")
+            return False
+
+        try:
+            # Zapisz dane do pliku tymczasowego dla przeglądarki
+            with open('temp_session_data.json', 'w', encoding='utf-8') as f:
+                # Konwertuj dane do formatu JSON z dodatkowymi metadanymi
+                json_data = {}
+
+                # Analizuj dane, aby odtworzyć historię przeglądania i powiązania między żądaniami
+                browsing_sessions = self._analyze_browsing_sessions()
+
+                # Zapisz zrekonstruowane sesje i oryginalne dane
+                json_data = {
+                    "raw_data": {},
+                    "browsing_sessions": browsing_sessions
+                }
+
+                # Zapisz oryginalne dane
+                for url, requests in self.captured_data.items():
+                    json_data["raw_data"][url] = []
+                    for req in requests:
+                        # Przygotuj kopię danych żądania
+                        req_copy = dict(req)
+
+                        # Konwertuj timestamp na string jeśli jest obiektem datetime
+                        if isinstance(req_copy.get('timestamp'), datetime):
+                            req_copy['timestamp'] = req_copy['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+
+                        # Upewnij się, że wszystkie wartości są serializowalne
+                        for key, value in list(req_copy.items()):
+                            if isinstance(value, (dict, list)):
+                                try:
+                                    # Sprawdź czy struktura jest serializowalna
+                                    json.dumps(value)
+                                except:
+                                    # Jeśli nie, przekonwertuj na string
+                                    req_copy[key] = str(value)
+
+                        json_data["raw_data"][url].append(req_copy)
+
+                json.dump(json_data, f, indent=2, default=str)
+
+            # Utwórz prosty serwer HTTP z funkcjonalnością proxy
+            class EnhancedSessionHandler(http.server.SimpleHTTPRequestHandler):
+                # Przechowywanie aktywnej sesji i ciasteczek
+                active_session = {
+                    "cookies": {},
+                    "current_url": None,
+                    "history": []
+                }
+
+                def do_GET(self):
+                    # Obsługa różnych ścieżek API i stron
+                    if self.path == '/':
+                        self.path = '/session_browser.html'
+                        return http.server.SimpleHTTPRequestHandler.do_GET(self)
+                    elif self.path == '/data':
+                        # Zwróć pełne dane sesji
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        with open('temp_session_data.json', 'rb') as f:
+                            self.wfile.write(f.read())
+                        return
+                    elif self.path.startswith('/proxy/'):
+                        # Symulacja proxy dla przechwyconych żądań
+                        try:
+                            # Wyodrębnij URL z ścieżki proxy
+                            encoded_url = self.path[7:]  # usunięcie "/proxy/"
+                            target_url = self._decode_proxy_url(encoded_url)
+
+                            # Wczytaj dane
+                            with open('temp_session_data.json', 'r', encoding='utf-8') as f:
+                                session_data = json.load(f)
+
+                            # Znajdź odpowiednie żądanie i odpowiedź
+                            response_content = self._find_response_for_url(session_data, target_url)
+
+                            if response_content:
+                                # Aktualizuj aktywną sesję
+                                self.active_session["current_url"] = target_url
+                                if target_url not in self.active_session["history"]:
+                                    self.active_session["history"].append(target_url)
+
+                                # Zwróć odpowiedź
+                                self.send_response(200)
+                                self.send_header('Content-type', 'text/html')
+                                self.end_headers()
+                                self.wfile.write(response_content.encode('utf-8', errors='ignore'))
+                            else:
+                                # Nie znaleziono odpowiedzi
+                                self.send_response(404)
+                                self.send_header('Content-type', 'text/html')
+                                self.end_headers()
+                                self.wfile.write(
+                                    b"<html><body><h1>Nie znaleziono odpowiedzi dla tego URL</h1><p>Brak danych odpowiedzi dla: " +
+                                    target_url.encode('utf-8') + b"</p></body></html>")
+                        except Exception as e:
+                            # Obsługa błędów
+                            self.send_response(500)
+                            self.send_header('Content-type', 'text/html')
+                            self.end_headers()
+                            self.wfile.write(
+                                f"<html><body><h1>Błąd podczas przetwarzania żądania</h1><p>{str(e)}</p></body></html>".encode(
+                                    'utf-8'))
+                        return
+                    elif self.path == '/api/session_state':
+                        # Zwróć stan aktywnej sesji
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(self.active_session).encode('utf-8'))
+                        return
+                    elif self.path.startswith('/api/'):
+                        # Inne punkty końcowe API
+                        self.handle_api_endpoints()
+                        return
+
+                    # Domyślna obsługa dla statycznych plików
+                    return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+                def do_POST(self):
+                    # Obsługa żądań POST dla symulacji formularzy
+                    if self.path.startswith('/api/submit/'):
+                        # Odczytaj dane z ciała żądania
+                        content_length = int(self.headers['Content-Length'])
+                        post_data = self.rfile.read(content_length).decode('utf-8')
+
+                        # Przetworz dane formularza
+                        try:
+                            form_data = json.loads(post_data)
+                            target_url = self._decode_proxy_url(self.path[12:])  # usunięcie "/api/submit/"
+
+                            # Znajdź odpowiednie żądanie POST w danych
+                            with open('temp_session_data.json', 'r', encoding='utf-8') as f:
+                                session_data = json.load(f)
+
+                            # Znajdź i zwróć odpowiedź
+                            response_content = self._find_post_response(session_data, target_url, form_data)
+
+                            # Aktualizuj sesję
+                            self.active_session["current_url"] = target_url
+                            if target_url not in self.active_session["history"]:
+                                self.active_session["history"].append(target_url)
+
+                            # Zwróć odpowiedź
+                            self.send_response(200)
+                            self.send_header('Content-type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                "success": True,
+                                "response": response_content,
+                                "redirect": None  # Tu można dodać przekierowanie
+                            }).encode('utf-8'))
+                        except Exception as e:
+                            # Obsługa błędów
+                            self.send_response(500)
+                            self.send_header('Content-type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                "success": False,
+                                "error": str(e)
+                            }).encode('utf-8'))
+                        return
+                    elif self.path == '/api/set_cookies':
+                        # Obsłuż ustawienie ciasteczek
+                        content_length = int(self.headers['Content-Length'])
+                        post_data = self.rfile.read(content_length).decode('utf-8')
+
+                        try:
+                            cookie_data = json.loads(post_data)
+                            # Dodaj do aktywnej sesji
+                            self.active_session["cookies"].update(cookie_data)
+
+                            # Odpowiedz
+                            self.send_response(200)
+                            self.send_header('Content-type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                "success": True,
+                                "cookies": self.active_session["cookies"]
+                            }).encode('utf-8'))
+                        except Exception as e:
+                            self.send_response(500)
+                            self.send_header('Content-type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                "success": False,
+                                "error": str(e)
+                            }).encode('utf-8'))
+                        return
+
+                    # Domyślna obsługa dla niezdefiniowanych ścieżek POST
+                    self.send_response(404)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(b"<html><body><h1>Not Found</h1></body></html>")
+
+                def handle_api_endpoints(self):
+                    """Obsługa dodatkowych punktów końcowych API"""
+                    if self.path == '/api/browsing_sessions':
+                        # Zwróć listę wykrytych sesji przeglądania
+                        with open('temp_session_data.json', 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(data.get("browsing_sessions", {})).encode('utf-8'))
+                        return
+                    elif self.path == '/api/clear_session':
+                        # Wyczyść aktywną sesję
+                        self.active_session = {
+                            "cookies": {},
+                            "current_url": None,
+                            "history": []
+                        }
+
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"success": True}).encode('utf-8'))
+                        return
+                    else:
+                        # Nieznany punkt końcowy API
+                        self.send_response(404)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"error": "Unknown API endpoint"}).encode('utf-8'))
+
+                def _decode_proxy_url(self, encoded_url):
+                    """Dekoduje URL z formatu używanego w ścieżce proxy"""
+                    # Najpierw zdekoduj URL z formatu URL
+                    import urllib.parse
+                    decoded = urllib.parse.unquote(encoded_url)
+                    return decoded
+
+                def _find_response_for_url(self, session_data, target_url):
+                    """Znajduje odpowiednią odpowiedź dla podanego URL"""
+                    raw_data = session_data.get("raw_data", {})
+
+                    # Próbuj znaleźć dokładne dopasowanie URL
+                    if target_url in raw_data:
+                        requests = raw_data[target_url]
+                        if requests:
+                            # Znajdź odpowiedź GET dla tego URL - symuluj zawartość HTML
+                            for req in requests:
+                                if req.get("method") == "GET" or req.get("method") == "UNKNOWN":
+                                    # Tutaj normalnie byłaby odpowiedź HTTP, ale w przechwyconych danych jej nie mamy
+                                    # Zamiast tego tworzymy symulowaną odpowiedź na podstawie dostępnych danych
+                                    return self._generate_simulated_response(target_url, req)
+
+                    # Jeśli nie znaleziono dokładnego dopasowania, szukaj częściowego
+                    for url, requests in raw_data.items():
+                        if url in target_url or target_url in url:
+                            if requests:
+                                for req in requests:
+                                    if req.get("method") == "GET" or req.get("method") == "UNKNOWN":
+                                        return self._generate_simulated_response(url, req)
+
+                    # Jeśli nic nie znaleziono, sprawdź domeny
+                    target_domain = self._extract_domain(target_url)
+                    for url, requests in raw_data.items():
+                        if self._extract_domain(url) == target_domain:
+                            if requests:
+                                for req in requests:
+                                    if req.get("method") == "GET" or req.get("method") == "UNKNOWN":
+                                        return self._generate_simulated_response(url, req)
+
+                    # Nic nie znaleziono
+                    return None
+
+                def _find_post_response(self, session_data, target_url, form_data):
+                    """Znajduje odpowiednią odpowiedź dla żądania POST z danymi formularza"""
+                    raw_data = session_data.get("raw_data", {})
+
+                    # Spróbuj znaleźć żądanie POST dla tego URL
+                    if target_url in raw_data:
+                        requests = raw_data[target_url]
+                        for req in requests:
+                            if req.get("method") == "POST":
+                                # Tutaj można dodać logikę dopasowania danych formularza
+                                # z oryginalnym żądaniem, ale na potrzeby symulacji
+                                # po prostu zwracamy symulowaną odpowiedź
+                                return self._generate_simulated_response(target_url, req)
+
+                    # Sprawdź domeny dla żądań POST
+                    target_domain = self._extract_domain(target_url)
+                    for url, requests in raw_data.items():
+                        if self._extract_domain(url) == target_domain:
+                            for req in requests:
+                                if req.get("method") == "POST":
+                                    return self._generate_simulated_response(url, req)
+
+                    # Jeśli nie znaleziono żądania POST, zwróć domyślną odpowiedź
+                    return "<html><body><h1>Formularz przesłany</h1><p>Brak odpowiedzi w przechwyconych danych.</p></body></html>"
+
+                def _generate_simulated_response(self, url, request_data):
+                    """Generuje symulowaną odpowiedź HTML na podstawie danych żądania"""
+                    protocol = request_data.get("protocol", "HTTP")
+                    method = request_data.get("method", "UNKNOWN")
+                    headers = request_data.get("headers", {})
+                    cookies = request_data.get("cookies", {})
+                    post_data = request_data.get("post_data", None)
+
+                    # Utwórz podstawową stronę HTML z dostępnymi danymi
+                    html = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <title>{url}</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                            .url-bar {{ background-color: #f1f1f1; padding: 10px; border-radius: 4px; margin-bottom: 20px; }}
+                            .section {{ margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 4px; }}
+                            .section h3 {{ margin-top: 0; background-color: #f5f5f5; padding: 10px; }}
+                            table {{ width: 100%; border-collapse: collapse; }}
+                            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                            th {{ background-color: #f2f2f2; }}
+                            .nav-button {{ padding: 8px 15px; background-color: #4CAF50; color: white; border: none; 
+                                           border-radius: 4px; cursor: pointer; margin-right: 5px; }}
+                            .nav-button:hover {{ background-color: #45a049; }}
+                            .content-area {{ min-height: 300px; border: 1px solid #ddd; padding: 20px; }}
+                            .controls {{ margin-bottom: 20px; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="url-bar">
+                            <strong>URL:</strong> {url}
+                        </div>
+
+                        <div class="controls">
+                            <button class="nav-button" onclick="goBack()">⬅️ Wstecz</button>
+                            <button class="nav-button" onclick="refreshPage()">🔄 Odśwież</button>
+                            <button class="nav-button" onclick="showRequestDetails()">🔍 Szczegóły żądania</button>
+                        </div>
+
+                        <div class="content-area">
+                            <h1>Symulowana odpowiedź dla {url}</h1>
+                            <p>Ta strona symuluje odpowiedź serwera na podstawie przechwyconych danych.</p>
+                            <p><strong>Protokół:</strong> {protocol}</p>
+                            <p><strong>Metoda:</strong> {method}</p>
+                    """
+
+                    # Dodaj linki do innych przechwyconych URL-i z tej samej domeny
+                    html += """
+                            <div class="section">
+                                <h3>Powiązane URL-e (wykryte w tej samej sesji)</h3>
+                                <div id="related-urls">Ładowanie powiązanych URL-i...</div>
+                            </div>
+                    """
+
+                    # Jeśli były formularze w oryginalnej stronie, dodaj symulowany formularz
+                    if method == "POST" or post_data:
+                        html += """
+                            <div class="section">
+                                <h3>Symulowany formularz</h3>
+                                <form id="simulated-form" onsubmit="submitForm(event)">
+                                    <div id="form-fields">
+                                        <!-- Pola formularza zostaną dodane dynamicznie -->
+                                    </div>
+                                    <button type="submit" class="nav-button">Wyślij formularz</button>
+                                </form>
+                            </div>
+                        """
+
+                    # Dodaj sekcję z ciasteczkami
+                    if cookies:
+                        html += """
+                            <div class="section">
+                                <h3>Ciasteczka znalezione w żądaniu</h3>
+                                <table>
+                                    <tr>
+                                        <th>Nazwa</th>
+                                        <th>Wartość</th>
+                                    </tr>
+                        """
+
+                        for name, value in cookies.items():
+                            html += f"""
+                                    <tr>
+                                        <td>{name}</td>
+                                        <td>{value}</td>
+                                    </tr>
+                            """
+
+                        html += """
+                                </table>
+                            </div>
+                        """
+
+                    # Zamknij sekcję zawartości
+                    html += """
+                        </div>
+
+                        <div id="request-details" class="section" style="display: none;">
+                            <h3>Szczegóły oryginalnego żądania</h3>
+                            <div id="details-content"></div>
+                        </div>
+                    """
+
+                    # Dodaj skrypty JavaScript do obsługi nawigacji i interakcji
+                    html += """
+                        <script>
+                            // Pobierz dane o powiązanych URL-ach
+                            fetch('/api/browsing_sessions')
+                                .then(response => response.json())
+                                .then(data => {
+                                    const currentUrl = window.location.pathname.substring(7); // Usuń '/proxy/'
+                                    const decodedCurrentUrl = decodeURIComponent(currentUrl);
+
+                                    // Znajdź sesję zawierającą bieżący URL
+                                    let relatedUrls = [];
+                                    for (const sessionId in data) {
+                                        const session = data[sessionId];
+                                        if (session.urls.includes(decodedCurrentUrl) || 
+                                            session.urls.some(url => url.includes(extractDomain(decodedCurrentUrl)))) {
+                                            relatedUrls = session.urls;
+                                            break;
+                                        }
+                                    }
+
+                                    // Wypełnij listę powiązanych URL-i
+                                    const urlsContainer = document.getElementById('related-urls');
+                                    if (relatedUrls.length > 0) {
+                                        let html = '<ul>';
+                                        relatedUrls.forEach(url => {
+                                            const encodedUrl = encodeURIComponent(url);
+                                            html += `<li><a href="/proxy/${encodedUrl}">${url}</a></li>`;
+                                        });
+                                        html += '</ul>';
+                                        urlsContainer.innerHTML = html;
+                                    } else {
+                                        urlsContainer.innerHTML = 'Nie znaleziono powiązanych URL-i.';
+                                    }
+
+                                    // Jeśli strona ma formularz, spróbuj go zrekonstruować
+                                    const formFields = document.getElementById('form-fields');
+                                    if (formFields) {
+                                        // Znajdź żądanie POST dla tego URL
+                                        fetch('/data')
+                                            .then(response => response.json())
+                                            .then(allData => {
+                                                const rawData = allData.raw_data || {};
+
+                                                // Szukaj żądania POST
+                                                let postRequest = null;
+                                                for (const url in rawData) {
+                                                    if (url === decodedCurrentUrl || url.includes(extractDomain(decodedCurrentUrl))) {
+                                                        for (const req of rawData[url]) {
+                                                            if (req.method === 'POST' && req.post_data) {
+                                                                postRequest = req;
+                                                                break;
+                                                            }
+                                                        }
+                                                        if (postRequest) break;
+                                                    }
+                                                }
+
+                                                if (postRequest && postRequest.post_data) {
+                                                    // Spróbuj zrekonstruować pola formularza
+                                                    try {
+                                                        // Sprawdź czy dane są w formacie URL-encoded
+                                                        const formParams = new URLSearchParams(postRequest.post_data);
+                                                        let fieldsHtml = '';
+
+                                                        for (const [name, value] of formParams.entries()) {
+                                                            if (name === 'password' || name.includes('pass')) {
+                                                                fieldsHtml += `
+                                                                    <div style="margin-bottom: 10px;">
+                                                                        <label for="${name}">${name}:</label><br>
+                                                                        <input type="password" id="${name}" name="${name}" value="${value}">
+                                                                    </div>
+                                                                `;
+                                                            } else {
+                                                                fieldsHtml += `
+                                                                    <div style="margin-bottom: 10px;">
+                                                                        <label for="${name}">${name}:</label><br>
+                                                                        <input type="text" id="${name}" name="${name}" value="${value}">
+                                                                    </div>
+                                                                `;
+                                                            }
+                                                        }
+
+                                                        if (fieldsHtml) {
+                                                            formFields.innerHTML = fieldsHtml;
+                                                        } else {
+                                                            formFields.innerHTML = `
+                                                                <div style="margin-bottom: 10px;">
+                                                                    <textarea style="width: 100%; height: 100px;" placeholder="Raw POST data:">${postRequest.post_data}</textarea>
+                                                                </div>
+                                                            `;
+                                                        }
+                                                    } catch (e) {
+                                                        // Jeśli nie udało się sparsować, pokaż surowe dane
+                                                        formFields.innerHTML = `
+                                                            <div style="margin-bottom: 10px;">
+                                                                <textarea style="width: 100%; height: 100px;" placeholder="Raw POST data:">${postRequest.post_data}</textarea>
+                                                            </div>
+                                                        `;
+                                                    }
+                                                } else {
+                                                    // Domyślny formularz
+                                                    formFields.innerHTML = `
+                                                        <div style="margin-bottom: 10px;">
+                                                            <label for="username">Nazwa użytkownika:</label><br>
+                                                            <input type="text" id="username" name="username">
+                                                        </div>
+                                                        <div style="margin-bottom: 10px;">
+                                                            <label for="password">Hasło:</label><br>
+                                                            <input type="password" id="password" name="password">
+                                                        </div>
+                                                    `;
+                                                }
+                                            });
+                                    }
+                                });
+
+                            // Funkcje nawigacji
+                            function goBack() {
+                                window.history.back();
+                            }
+
+                            function refreshPage() {
+                                window.location.reload();
+                            }
+
+                            function showRequestDetails() {
+                                const detailsDiv = document.getElementById('request-details');
+                                const detailsContent = document.getElementById('details-content');
+
+                                if (detailsDiv.style.display === 'none') {
+                                    // Pobierz szczegóły żądania
+                                    fetch('/data')
+                                        .then(response => response.json())
+                                        .then(data => {
+                                            const rawData = data.raw_data || {};
+                                            const currentUrl = decodeURIComponent(window.location.pathname.substring(7));
+
+                                            let requestDetails = null;
+                                            // Znajdź żądanie dla tego URL
+                                            if (rawData[currentUrl]) {
+                                                requestDetails = rawData[currentUrl][0];
+                                            } else {
+                                                // Szukaj częściowego dopasowania
+                                                for (const url in rawData) {
+                                                    if (url.includes(currentUrl) || currentUrl.includes(url)) {
+                                                        requestDetails = rawData[url][0];
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
+                                            if (requestDetails) {
+                                                // Wyświetl szczegóły w formie tabeli
+                                                let html = `<h4>URL: ${currentUrl}</h4>`;
+
+                                                // Metoda i protokół
+                                                html += `<p><strong>Metoda:</strong> ${requestDetails.method}</p>`;
+                                                html += `<p><strong>Protokół:</strong> ${requestDetails.protocol}</p>`;
+
+                                                // Nagłówki
+                                                html += `<h4>Nagłówki:</h4>`;
+                                                html += `<table>
+                                                    <tr>
+                                                        <th>Nazwa</th>
+                                                        <th>Wartość</th>
+                                                    </tr>`;
+
+                                                for (const [header, value] of Object.entries(requestDetails.headers || {})) {
+                                                    html += `
+                                                        <tr>
+                                                            <td>${header}</td>
+                                                            <td>${value}</td>
+                                                        </tr>
+                                                    `;
+                                                }
+
+                                                html += `</table>`;
+
+                                                // Ciasteczka
+                                                if (requestDetails.cookies && Object.keys(requestDetails.cookies).length > 0) {
+                                                    html += `<h4>Ciasteczka:</h4>`;
+                                                    html += `<table>
+                                                        <tr>
+                                                            <th>Nazwa</th>
+                                                            <th>Wartość</th>
+                                                        </tr>`;
+
+                                                    for (const [name, value] of Object.entries(requestDetails.cookies)) {
+                                                        html += `
+                                                            <tr>
+                                                                <td>${name}</td>
+                                                                <td>${value}</td>
+                                                            </tr>
+                                                        `;
+                                                    }
+
+                                                    html += `</table>`;
+                                                }
+
+                                                // Dane POST
+                                                if (requestDetails.post_data) {
+                                                    html += `<h4>Dane POST:</h4>`;
+                                                    html += `<pre>${requestDetails.post_data}</pre>`;
+                                                }
+
+                                                detailsContent.innerHTML = html;
+                                            } else {
+                                                detailsContent.innerHTML = '<p>Nie znaleziono szczegółów żądania.</p>';
+                                            }
+                                        });
+
+                                    detailsDiv.style.display = 'block';
+                                } else {
+                                    detailsDiv.style.display = 'none';
+                                }
+    
     def load_captured_data(self, filename):
         """Wczytuje przechwycone dane z pliku"""
         try:
