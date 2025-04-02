@@ -1069,49 +1069,60 @@ class NetworkSniffer:
                     print("Nieprawidłowy wybór. Wybierz opcję od 0 do 4.")
 
     def create_session_browser_app(self):
-        """Tworzy aplikację do przeglądania sesji w formie interaktywnej przeglądarki"""
+        """Tworzy aplikację do przeglądania sesji w formie interaktywnej przeglądarki - wersja z zabezpieczeniami"""
         if not self.captured_data or len(self.captured_data) == 0:
             print("Błąd: Brak danych do wyświetlenia.")
             return False
 
         try:
-            # Zapisz dane do pliku tymczasowego dla przeglądarki
-            with open('temp_session_data.json', 'w', encoding='utf-8') as f:
-                # Konwertuj dane do formatu JSON
-                json_data = {}
-                for url, requests in self.captured_data.items():
-                    json_data[url] = []
-                    for req in requests:
-                        # Przygotuj kopię danych żądania
-                        req_copy = dict(req)
+            # Sprawdź i napraw dane
+            self.handle_session_data_errors()
 
-                        # Konwertuj timestamp na string jeśli jest obiektem datetime
-                        if isinstance(req_copy.get('timestamp'), datetime):
-                            req_copy['timestamp'] = req_copy['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+            # Przygotuj dane dla przeglądarki
+            browser_data = self.prepare_session_browser_data()
+            if not browser_data:
+                print("Nie udało się przygotować danych dla przeglądarki.")
+                return False
 
-                        # Upewnij się, że wszystkie wartości są serializowalne
-                        for key, value in list(req_copy.items()):
-                            if isinstance(value, (dict, list)):
-                                try:
-                                    # Sprawdź czy struktura jest serializowalna
-                                    json.dumps(value)
-                                except:
-                                    # Jeśli nie, przekonwertuj na string
-                                    req_copy[key] = str(value)
+            # Zapisz dane do pliku tymczasowego
+            try:
+                with open('temp_session_data.json', 'w', encoding='utf-8') as f:
+                    import json
+                    json.dump(browser_data, f, indent=2, default=str)
+                print(f"Zapisano {len(browser_data)} URL w pliku tymczasowym.")
+            except Exception as e:
+                print(f"Błąd podczas zapisywania pliku tymczasowego: {e}")
+                return False
 
-                        json_data[url].append(req_copy)
-
-                json.dump(json_data, f, indent=2, default=str)
-
-            # Utwórz plik HTML dla interaktywnej przeglądarki sesji
-            with open('session_browser_app.html', 'w', encoding='utf-8') as f:
-                f.write(self._get_session_browser_html())
+            # Utwórz plik HTML dla przeglądarki sesji
+            try:
+                with open('session_browser_app.html', 'w', encoding='utf-8') as f:
+                    f.write(self._get_session_browser_html())
+                print(f"Utworzono plik HTML przeglądarki sesji.")
+            except Exception as e:
+                print(f"Błąd podczas tworzenia pliku HTML: {e}")
+                # Usuń plik danych jeśli nie udało się utworzyć HTML
+                try:
+                    if os.path.exists('temp_session_data.json'):
+                        os.remove('temp_session_data.json')
+                except:
+                    pass
+                return False
 
             return True
         except Exception as e:
-            print(f"Błąd podczas tworzenia aplikacji do przeglądania sesji: {e}")
+            print(f"Błąd podczas tworzenia aplikacji przeglądarki sesji: {e}")
             import traceback
             traceback.print_exc()
+
+            # Spróbuj wyczyścić pliki tymczasowe w przypadku błędu
+            try:
+                for temp_file in ['temp_session_data.json', 'session_browser_app.html']:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+            except:
+                pass
+
             return False
 
     def _get_session_browser_html(self):
@@ -2138,6 +2149,175 @@ class NetworkSniffer:
             import traceback
             traceback.print_exc()
             return None
+
+    def handle_session_data_errors(self):
+        """Sprawdza i naprawia problemy w danych sesji
+
+        Returns:
+            bool: True jeśli dane są poprawne lub zostały naprawione, False w przeciwnym wypadku
+        """
+        if not self.captured_data:
+            print("Brak danych sesji do sprawdzenia.")
+            return False
+
+        try:
+            print("Sprawdzanie integralności danych sesji...")
+
+            # Stwórz kopię danych, aby nie modyfikować oryginału podczas iteracji
+            fixed_data = {}
+            problematic_urls = []
+            fixed_count = 0
+
+            for url, requests in self.captured_data.items():
+                if not isinstance(requests, list):
+                    print(f"Nieprawidłowy format danych dla URL: {url} (nie jest listą)")
+                    problematic_urls.append((url, "not_list"))
+                    # Spróbuj naprawić konwertując na listę jeśli to możliwe
+                    if isinstance(requests, dict):
+                        fixed_data[url] = [requests]
+                        fixed_count += 1
+                        print(f"Naprawiono dane dla URL: {url}")
+                    continue
+
+                valid_requests = []
+
+                for req in requests:
+                    if not isinstance(req, dict):
+                        print(f"Nieprawidłowy format żądania dla URL: {url} (nie jest słownikiem)")
+                        continue
+
+                    # Upewnij się, że wymagane pola są obecne
+                    if 'timestamp' not in req:
+                        req['timestamp'] = 'unknown'
+
+                    if 'method' not in req:
+                        req['method'] = 'GET'
+
+                    if 'headers' not in req:
+                        req['headers'] = {}
+
+                    if 'cookies' not in req:
+                        req['cookies'] = {}
+
+                    # Dodaj naprawione żądanie
+                    valid_requests.append(req)
+
+                if len(valid_requests) != len(requests):
+                    print(f"Naprawiono {len(requests) - len(valid_requests)} problematycznych żądań dla URL: {url}")
+                    fixed_count += 1
+
+                fixed_data[url] = valid_requests
+
+            # Sprawdź, czy są URL bez żadnych ważnych żądań
+            empty_urls = [url for url, reqs in fixed_data.items() if not reqs]
+            for url in empty_urls:
+                print(f"Usuwanie URL bez ważnych żądań: {url}")
+                del fixed_data[url]
+                fixed_count += 1
+
+            # Zastosuj naprawione dane
+            if fixed_count > 0:
+                print(f"Naprawiono {fixed_count} problemów w danych sesji.")
+                self.captured_data = fixed_data
+            else:
+                print("Nie znaleziono problemów w danych sesji.")
+
+            # Dodatkowe sprawdzenie zduplikowanych timestampów
+            timestamp_counts = {}
+            for url, requests in self.captured_data.items():
+                for req in requests:
+                    timestamp = req.get('timestamp', 'unknown')
+                    if timestamp not in timestamp_counts:
+                        timestamp_counts[timestamp] = 0
+                    timestamp_counts[timestamp] += 1
+
+            duplicate_timestamps = [ts for ts, count in timestamp_counts.items() if count > 10 and ts != 'unknown']
+            if duplicate_timestamps:
+                print(f"Uwaga: Wykryto {len(duplicate_timestamps)} powtarzających się timestampów.")
+                print("To może wskazywać na problem z danymi.")
+
+            return True
+
+        except Exception as e:
+            print(f"Błąd podczas sprawdzania danych sesji: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def prepare_session_browser_data(self):
+        """Przygotowuje dane dla przeglądarki sesji, konwertując je do odpowiedniego formatu
+
+        Returns:
+            dict: Przygotowane dane sesji
+        """
+        if not self.captured_data:
+            print("Brak danych do przygotowania.")
+            return {}
+
+        try:
+            print("Przygotowywanie danych dla przeglądarki sesji...")
+
+            # Sprawdź i napraw dane
+            self.handle_session_data_errors()
+
+            # Przygotuj dane w formacie odpowiednim dla przeglądarki
+            browser_data = {}
+
+            for url, requests in self.captured_data.items():
+                # Pomiń URL bez żądań
+                if not requests:
+                    continue
+
+                # Pomiń nieprawidłowe URL
+                if not isinstance(url, str) or not url:
+                    continue
+
+                # Upewnij się, że URL ma prawidłowy format
+                if not url.startswith(('http://', 'https://')):
+                    # Spróbuj dodać schemat
+                    if '://' not in url:
+                        if any(url.startswith(domain) for domain in ['.com', '.org', '.net', '.pl', 'www.']):
+                            url = 'http://' + url
+                        else:
+                            # Pomiń nieprawidłowe URL
+                            continue
+
+                # Przygotuj żądania
+                prepared_requests = []
+
+                for req in requests:
+                    # Upewnij się, że żądanie jest słownikiem
+                    if not isinstance(req, dict):
+                        continue
+
+                    # Skopiuj tylko potrzebne pola
+                    prepared_req = {
+                        'timestamp': req.get('timestamp', 'unknown'),
+                        'method': req.get('method', 'GET'),
+                        'headers': req.get('headers', {}),
+                        'cookies': req.get('cookies', {}),
+                        'protocol': req.get('protocol', 'HTTP')
+                    }
+
+                    # Dodaj dane POST jeśli istnieją
+                    if 'post_data' in req:
+                        prepared_req['post_data'] = req['post_data']
+
+                    # Dodaj treść odpowiedzi jeśli istnieje
+                    if 'response_content' in req:
+                        prepared_req['response_content'] = req['response_content']
+
+                    prepared_requests.append(prepared_req)
+
+                browser_data[url] = prepared_requests
+
+            return browser_data
+
+        except Exception as e:
+            print(f"Błąd podczas przygotowywania danych: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
 
     def start_interactive_session_browser(self):
         """Uruchamia interaktywną przeglądarkę sesji z zaawansowanymi funkcjami odtwarzania"""
@@ -3704,6 +3884,8 @@ class NetworkSniffer:
             print("2. Uruchom interaktywną przeglądarkę sesji")
             print("3. Odtwórz konkretne żądanie")
             print("4. Symuluj całą sesję przeglądania")
+            print("5. Przeglądaj zrekonstruowane strony HTTP")
+            print("6. Utwórz statyczną przeglądarkę HTML (fallback)")
             print("0. Powrót do menu głównego")
 
             try:
@@ -3719,7 +3901,29 @@ class NetworkSniffer:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "2":
                 if self.captured_data:
-                    self.start_interactive_session_browser()
+                    try:
+                        # Najpierw sprawdź i napraw dane
+                        print("Sprawdzanie i przygotowywanie danych sesji...")
+                        if self.handle_session_data_errors():
+                            result = self.start_interactive_session_browser()
+                            if not result:
+                                print("\nWystąpił problem z uruchomieniem interaktywnej przeglądarki.")
+                                fallback_choice = input(
+                                    "Czy chcesz użyć alternatywnej statycznej przeglądarki? (t/n): ").lower()
+                                if fallback_choice in ['t', 'tak']:
+                                    self.create_simple_browser_fallback()
+                        else:
+                            print("Nie udało się poprawić danych sesji.")
+                            print("Spróbuj wczytać dane z innego pliku lub przechwycić ruch ponownie.")
+                    except Exception as e:
+                        print(f"\nWystąpił nieoczekiwany błąd: {e}")
+                        import traceback
+                        traceback.print_exc()
+
+                        fallback_choice = input(
+                            "Czy chcesz użyć alternatywnej statycznej przeglądarki? (t/n): ").lower()
+                        if fallback_choice in ['t', 'tak']:
+                            self.create_simple_browser_fallback()
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "3":
@@ -3732,10 +3936,20 @@ class NetworkSniffer:
                     self.simulate_browsing_session()
                 else:
                     print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            elif choice == "5":
+                if self.captured_data:
+                    self.browse_reconstructed_pages()
+                else:
+                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            elif choice == "6":
+                if self.captured_data:
+                    self.create_simple_browser_fallback()
+                else:
+                    print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
             elif choice == "0":
                 break
             else:
-                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 4.")
+                print("Nieprawidłowy wybór. Wybierz opcję od 0 do 6.")
 
     def show_data_management_menu(self):
         """Wyświetla menu zarządzania danymi"""
@@ -4293,6 +4507,456 @@ class NetworkSniffer:
             import traceback
             traceback.print_exc()
             return []
+
+    def reconstruct_html_page(self, url, requests):
+        """Rekonstruuje pełną stronę HTML na podstawie przechwyconych żądań
+
+        Args:
+            url (str): URL strony do rekonstrukcji
+            requests (list): Lista przechwyconych żądań dla tego URL
+
+        Returns:
+            str: Zrekonstruowany kod HTML strony
+        """
+        if not requests:
+            return f"<html><body><h1>Brak danych dla {url}</h1></body></html>"
+
+        # Znajdź główne żądanie HTML
+        main_request = None
+        html_content = None
+
+        for req in requests:
+            # Sprawdź nagłówki aby znaleźć odpowiedź HTML
+            headers = req.get('headers', {})
+            if 'Content-Type' in headers and 'text/html' in headers['Content-Type'].lower():
+                main_request = req
+                # Sprawdź czy mamy treść odpowiedzi
+                if 'response_content' in req:
+                    html_content = req['response_content']
+                break
+
+        # Jeśli nie znaleziono żądania HTML, użyj pierwszego żądania
+        if not main_request:
+            main_request = requests[0]
+
+        # Jeśli nie mamy treści HTML, wygeneruj zastępczą stronę
+        if not html_content:
+            base_domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>{base_domain}</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
+                    .header {{ background: #f5f5f5; padding: 15px; border-bottom: 1px solid #ddd; }}
+                    .content {{ padding: 20px; }}
+                    .request-info {{ margin-bottom: 20px; padding: 10px; border: 1px solid #eee; }}
+                    .resource {{ margin: 5px 0; padding: 8px; background: #f9f9f9; border-radius: 4px; }}
+                    .http {{ color: #e74c3c; }}
+                    .https {{ color: #27ae60; }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h2>Zrekonstruowana strona: {url}</h2>
+                    <p>Ta strona została zrekonstruowana na podstawie przechwyconych danych.</p>
+                </div>
+                <div class="content">
+                    <div class="request-info">
+                        <h3>Informacje o żądaniu</h3>
+                        <p><strong>URL:</strong> {url}</p>
+                        <p><strong>Metoda:</strong> {main_request.get('method', 'GET')}</p>
+                        <p><strong>Czas:</strong> {main_request.get('timestamp', 'nieznany')}</p>
+                    </div>
+            """
+
+            # Dodaj informacje o zasobach
+            resource_count = 0
+            html_content += "<h3>Powiązane zasoby</h3>"
+
+            for req in requests:
+                if req != main_request:
+                    req_url = req.get('url', url)
+                    protocol = "HTTPS" if req_url.startswith("https://") else "HTTP"
+                    protocol_class = "https" if protocol == "HTTPS" else "http"
+
+                    html_content += f"""
+                    <div class="resource">
+                        <span class="{protocol_class}">{protocol}</span> {req.get('method', 'GET')} {req_url}
+                    </div>
+                    """
+                    resource_count += 1
+
+                    # Ogranicz liczbę wyświetlanych zasobów
+                    if resource_count >= 20:
+                        html_content += f"<p>... oraz {len(requests) - 21} więcej zasobów</p>"
+                        break
+
+            html_content += """
+                </div>
+            </body>
+            </html>
+            """
+
+        # Dodaj skrypt do przechwytywania kliknięć i nawigacji
+        inject_script = """
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Przechwytuj kliknięcia
+            document.addEventListener('click', function(e) {
+                // Sprawdź czy kliknięto link
+                let target = e.target;
+                while (target && target.tagName !== 'A') {
+                    target = target.parentElement;
+                }
+
+                if (target && target.href) {
+                    e.preventDefault();
+
+                    // Wyślij informację o kliknięciu do rodzica
+                    window.parent.postMessage({
+                        type: 'linkClick',
+                        url: target.href
+                    }, '*');
+                }
+            });
+
+            // Oznacz wszystkie linki
+            const links = document.querySelectorAll('a');
+            links.forEach(link => {
+                link.style.border = '1px dashed #3498db';
+                link.style.padding = '2px 4px';
+                link.setAttribute('title', 'Kliknij, aby przejść do: ' + link.href);
+            });
+        });
+        </script>
+        """
+
+        # Dodaj skrypt do kodu HTML
+        if '</body>' in html_content:
+            html_content = html_content.replace('</body>', inject_script + '</body>')
+        elif '</html>' in html_content:
+            html_content = html_content.replace('</html>', inject_script + '</body></html>')
+        else:
+            html_content += inject_script
+
+        return html_content
+
+    def save_reconstructed_page(self, url, html_content, output_dir="reconstructed_pages"):
+        """Zapisuje zrekonstruowaną stronę HTML do pliku
+
+        Args:
+            url (str): URL strony
+            html_content (str): Treść HTML
+            output_dir (str): Katalog docelowy
+
+        Returns:
+            str: Ścieżka do zapisanego pliku
+        """
+        import os
+
+        # Utwórz katalog jeśli nie istnieje
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        # Generuj nazwę pliku na podstawie URL
+        base_domain = url.split('://', 1)[1].split('/', 1)[0] if '://' in url else url
+        path = url.split('://', 1)[1].split('/', 1)[1] if '://' in url and '/' in url.split('://', 1)[1] else ""
+
+        # Usuń znaki niedozwolone w nazwach plików
+        for char in [':', '?', '&', '=', ' ', '#']:
+            path = path.replace(char, '_')
+
+        # Ogranicz długość nazwy pliku
+        if len(path) > 50:
+            path = path[:50]
+
+        # Generuj nazwę pliku
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{base_domain}_{path}_{timestamp}.html"
+
+        # Zapisz plik
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+
+        return filepath
+
+    def browse_reconstructed_pages(self):
+        """Umożliwia przeglądanie zrekonstruowanych stron HTTP w przeglądarce"""
+        if not self.captured_data:
+            print("Brak danych do wyświetlenia. Najpierw przechwytaj ruch lub wczytaj dane z pliku.")
+            return False
+
+        try:
+            # Filtruj tylko HTTP URLs (nie HTTPS)
+            http_urls = [url for url in self.captured_data.keys() if url.startswith('http://')]
+
+            if not http_urls:
+                print("Nie znaleziono przechwyconych stron HTTP. Tylko strony HTTP mogą być zrekonstruowane.")
+                print("Strony HTTPS są szyfrowane i nie mogą być w pełni zrekonstruowane.")
+                return False
+
+            # Wyświetl dostępne strony HTTP
+            print("\n=== Dostępne strony HTTP ===")
+            for i, url in enumerate(http_urls):
+                print(f"{i + 1}. {url} ({len(self.captured_data[url])} żądań)")
+
+            # Wybór strony
+            try:
+                choice = input("\nWybierz stronę do rekonstrukcji (numer) lub '0' aby wyjść: ")
+                if choice == '0':
+                    return False
+
+                url_index = int(choice) - 1
+                if url_index < 0 or url_index >= len(http_urls):
+                    print("Nieprawidłowy numer strony.")
+                    return False
+
+                selected_url = http_urls[url_index]
+                requests = self.captured_data[selected_url]
+
+                print(f"\nRekonstruowanie strony: {selected_url}...")
+
+                # Rekonstruuj stronę
+                html_content = self.reconstruct_html_page(selected_url, requests)
+
+                # Zapisz zrekonstruowaną stronę
+                filepath = self.save_reconstructed_page(selected_url, html_content)
+
+                print(f"Strona została zrekonstruowana i zapisana do pliku: {filepath}")
+
+                # Zapytaj, czy otworzyć w przeglądarce
+                open_browser = input("Czy chcesz otworzyć stronę w przeglądarce? (t/n): ").lower()
+                if open_browser in ['t', 'tak']:
+                    try:
+                        import webbrowser
+                        webbrowser.open('file://' + os.path.abspath(filepath))
+                        print("Strona została otwarta w przeglądarce.")
+                    except Exception as e:
+                        print(f"Nie udało się otworzyć przeglądarki: {e}")
+                        print(f"Możesz ręcznie otworzyć plik: {filepath}")
+
+                # Zapytaj o rekonstrukcję kolejnej strony
+                continue_choice = input("\nCzy chcesz zrekonstruować inną stronę? (t/n): ").lower()
+                if continue_choice in ['t', 'tak']:
+                    return self.browse_reconstructed_pages()
+
+                return True
+
+            except ValueError:
+                print("Nieprawidłowy numer strony. Wprowadź liczbę.")
+                return False
+
+        except Exception as e:
+            print(f"Błąd podczas rekonstrukcji strony: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def create_simple_browser_fallback(self):
+        """Tworzy prostą statyczną przeglądarkę przechwyconych danych jako fallback, gdy interaktywna przeglądarka nie działa
+
+        Returns:
+            bool: True jeśli tworzenie przebiegło pomyślnie, False w przeciwnym wypadku
+        """
+        if not self.captured_data:
+            print("Brak danych do wyświetlenia.")
+            return False
+
+        try:
+            # Generuj nazwę pliku
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"captured_data_{timestamp}.html"
+
+            # Utwórz HTML
+            html = """<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Przechwycone dane ruchu sieciowego</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+            h1, h2, h3 { color: #2c3e50; }
+            .url-item { margin-bottom: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+            .url-item h3 { margin-top: 0; }
+            .http { color: green; }
+            .https { color: blue; }
+            .request-details { margin-left: 20px; padding: 10px; border-left: 3px solid #eee; margin-bottom: 10px; }
+            .request-details pre { background: #f9f9f9; padding: 10px; overflow-x: auto; }
+            .cookie-table, .header-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+            .cookie-table th, .cookie-table td, .header-table th, .header-table td { 
+                padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+            .toggle-btn { 
+                background: #3498db; color: white; border: none; padding: 5px 10px; 
+                border-radius: 3px; cursor: pointer; margin-top: 5px; }
+            .toggle-btn:hover { background: #2980b9; }
+            .hidden { display: none; }
+            .badge {
+                display: inline-block;
+                padding: 2px 5px;
+                border-radius: 3px;
+                font-size: 12px;
+                margin-right: 5px;
+                color: white;
+            }
+            .http-badge { background-color: #e74c3c; }
+            .https-badge { background-color: #27ae60; }
+        </style>
+        <script>
+            function toggleDetails(id) {
+                const element = document.getElementById(id);
+                if (element.classList.contains('hidden')) {
+                    element.classList.remove('hidden');
+                } else {
+                    element.classList.add('hidden');
+                }
+
+                // Zmień tekst przycisku
+                const button = document.querySelector(`button[onclick="toggleDetails('${id}')"]`);
+                if (button) {
+                    button.textContent = element.classList.contains('hidden') ? 'Pokaż szczegóły' : 'Ukryj szczegóły';
+                }
+            }
+        </script>
+    </head>
+    <body>
+        <h1>Przechwycone dane ruchu sieciowego</h1>
+        <p>Data wygenerowania: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """</p>
+
+        <div>
+            <h2>Statystyki</h2>
+            <p>Liczba przechwyconych URL: """ + str(len(self.captured_data)) + """</p>
+            <p>Łączna liczba żądań: """ + str(sum(len(reqs) for reqs in self.captured_data.values())) + """</p>
+        </div>
+
+        <h2>Przechwycone URL</h2>
+    """
+
+            # Dodaj każdy URL i jego żądania
+            for i, (url, requests) in enumerate(self.captured_data.items()):
+                # Określ protokół
+                protocol = "HTTPS" if url.startswith("https://") else "HTTP"
+                protocol_class = "https-badge" if protocol == "HTTPS" else "http-badge"
+
+                html += f"""
+        <div class="url-item">
+            <h3>
+                <span class="badge {protocol_class}">{protocol}</span>
+                {url}
+            </h3>
+            <p>Liczba żądań: {len(requests)}</p>
+            <button class="toggle-btn" onclick="toggleDetails('url-{i}')">Pokaż szczegóły</button>
+
+            <div id="url-{i}" class="hidden">
+    """
+
+                # Dodaj szczegóły każdego żądania
+                for j, req in enumerate(requests):
+                    method = req.get('method', 'GET')
+                    timestamp = req.get('timestamp', 'nieznany')
+
+                    html += f"""
+                <div class="request-details">
+                    <h4>Żądanie #{j + 1} - {method} ({timestamp})</h4>
+    """
+
+                    # Dodaj nagłówki
+                    headers = req.get('headers', {})
+                    if headers:
+                        html += """
+                    <h5>Nagłówki</h5>
+                    <table class="header-table">
+                        <tr>
+                            <th>Nagłówek</th>
+                            <th>Wartość</th>
+                        </tr>
+    """
+
+                        for header, value in headers.items():
+                            html += f"""
+                        <tr>
+                            <td>{header}</td>
+                            <td>{value}</td>
+                        </tr>"""
+
+                        html += """
+                    </table>
+    """
+
+                    # Dodaj ciasteczka
+                    cookies = req.get('cookies', {})
+                    if cookies:
+                        html += """
+                    <h5>Ciasteczka</h5>
+                    <table class="cookie-table">
+                        <tr>
+                            <th>Nazwa</th>
+                            <th>Wartość</th>
+                        </tr>
+    """
+
+                        for name, value in cookies.items():
+                            html += f"""
+                        <tr>
+                            <td>{name}</td>
+                            <td>{value}</td>
+                        </tr>"""
+
+                        html += """
+                    </table>
+    """
+
+                    # Dodaj dane POST
+                    if 'post_data' in req and req['post_data']:
+                        html += f"""
+                    <h5>Dane POST</h5>
+                    <pre>{req['post_data']}</pre>
+    """
+
+                    html += """
+                </div>
+    """
+
+                html += """
+            </div>
+        </div>
+    """
+
+            # Zakończ HTML
+            html += """
+    </body>
+    </html>
+    """
+
+            # Zapisz plik
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(html)
+
+            print(f"Utworzono statyczną przeglądarkę w pliku: {filename}")
+
+            # Spróbuj otworzyć w przeglądarce
+            open_browser = input("Czy chcesz otworzyć stronę w przeglądarce? (t/n): ").lower()
+            if open_browser in ['t', 'tak']:
+                try:
+                    import webbrowser
+                    webbrowser.open('file://' + os.path.abspath(filename))
+                    print("Strona została otwarta w przeglądarce.")
+                except Exception as e:
+                    print(f"Nie udało się otworzyć przeglądarki: {e}")
+                    print(f"Możesz ręcznie otworzyć plik: {filename}")
+
+            return True
+
+        except Exception as e:
+            print(f"Błąd podczas tworzenia statycznej przeglądarki: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
 
 # Uruchomienie programu
 if __name__ == "__main__":
