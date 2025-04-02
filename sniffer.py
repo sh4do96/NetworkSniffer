@@ -11,7 +11,9 @@ import socketserver
 import json
 import pickle
 from datetime import datetime
-
+from domain_resolver import improve_url_identification
+import gzip
+import zlib
 
 class NetworkSniffer:
     def __init__(self):
@@ -26,6 +28,26 @@ class NetworkSniffer:
         self.gateway_ip = None
         self._test_scapy_imports()
         self.enable_ip_forwarding()
+
+    def get_full_html_content(self, url):
+        """
+        Próbuje zebrać pełną zawartość HTML dla danego URL
+        """
+        try:
+            # Znajdź wszystkie żądania i odpowiedzi dla danego URL
+            html_responses = []
+            for requests in self.captured_data.get(url, []):
+                for response in requests.get('responses', []):
+                    # Sprawdź, czy odpowiedź zawiera treść HTML
+                    if response.get('headers', {}).get('Content-Type', '').startswith('text/html'):
+                        html_responses.append(response['content'])
+
+            # Zwróć pierwszą znalezioną odpowiedź HTML lub pustą treść
+            return html_responses[0] if html_responses else "<html><body>Nie znaleziono treści HTML</body></html>"
+
+        except Exception as e:
+            print(f"Błąd podczas pobierania treści HTML: {e}")
+            return "<html><body>Błąd podczas ładowania strony</body></html>"
 
     def save_captured_data(self):
         """Zapisuje przechwycone dane do pliku"""
@@ -221,62 +243,7 @@ class NetworkSniffer:
             return
 
         try:
-            # Zapisz informacje o pakiecie dla celów debugowania
-            if packet.haslayer(scapy.TCP):
-                sport = packet[scapy.TCP].sport
-                dport = packet[scapy.TCP].dport
-
-                # Pobierz adresy IP dla pakietu
-                if packet.haslayer(scapy.IP):
-                    src_ip = packet[scapy.IP].src
-                    dst_ip = packet[scapy.IP].dst
-
-                    # Określ, czy pakiet jest związany z monitorowanym urządzeniem
-                    is_from_target = (src_ip == self.selected_device['ip'])
-                    is_to_target = (dst_ip == self.selected_device['ip'])
-
-                    if is_from_target or is_to_target:
-                        # Przechwytujemy zarówno HTTP jak i HTTPS
-                        if sport == 80 or dport == 80 or sport == 443 or dport == 443:
-                            # Dla HTTPS możemy tylko zapisać podstawowe informacje o połączeniu
-                            protocol = "HTTP" if (sport == 80 or dport == 80) else "HTTPS"
-                            direction = "→" if is_from_target else "←"
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                            if protocol == "HTTPS":
-                                print(f"[{timestamp}] {protocol} {src_ip}:{sport} {direction} {dst_ip}:{dport}")
-
-                                # Zapisz podstawowe informacje o połączeniu HTTPS
-                                url = dst_ip if is_from_target else src_ip
-                                if f"https://{url}" not in self.captured_data:
-                                    self.captured_data[f"https://{url}"] = []
-
-                                # Sprawdź czy mamy już takie połączenie
-                                connection_exists = False
-                                for req in self.captured_data[f"https://{url}"]:
-                                    if (req.get('src_ip') == src_ip and
-                                            req.get('dst_ip') == dst_ip and
-                                            req.get('sport') == sport and
-                                            req.get('dport') == dport):
-                                        connection_exists = True
-                                        break
-
-                                if not connection_exists:
-                                    self.captured_data[f"https://{url}"].append({
-                                        'timestamp': timestamp,
-                                        'method': 'CONNECT',
-                                        'headers': {},
-                                        'cookies': {},
-                                        'post_data': None,
-                                        'protocol': protocol,
-                                        'src_ip': src_ip,
-                                        'dst_ip': dst_ip,
-                                        'sport': sport,
-                                        'dport': dport
-                                    })
-                                    print(f"Zapisano informacje o połączeniu HTTPS do {url}")
-
-            # Próba przechwycenia HTTP
+            # Przechwytywanie żądań HTTP
             if packet.haslayer(HTTPRequest):
                 # Pobierz URL
                 try:
@@ -294,7 +261,7 @@ class NetworkSniffer:
                 # Pobierz nagłówki
                 headers = {}
                 for field in packet[HTTPRequest].fields:
-                    if field != 'Method' and field != 'Path' and field != 'Http-Version':
+                    if field not in ['Method', 'Path', 'Http-Version']:
                         try:
                             headers[field] = packet[HTTPRequest].fields[field].decode(errors='ignore')
                         except:
@@ -315,89 +282,169 @@ class NetworkSniffer:
                 if method == 'POST' and packet.haslayer(scapy.Raw):
                     post_data = packet[scapy.Raw].load.decode(errors='ignore')
 
-                # Zapisz dane
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                if url not in self.captured_data:
-                    self.captured_data[url] = []
+                # Pobierz IP
+                if packet.haslayer(scapy.IP):
+                    src_ip = packet[scapy.IP].src
+                    dst_ip = packet[scapy.IP].dst
+                else:
+                    src_ip = dst_ip = "unknown"
 
+                # Timestamp
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # Utwórz wpis żądania
                 request_data = {
                     'timestamp': timestamp,
                     'method': method,
+                    'url': url,
                     'headers': headers,
                     'cookies': cookies,
                     'post_data': post_data,
-                    'protocol': 'HTTP'
+                    'protocol': 'HTTP',
+                    'src_ip': src_ip,
+                    'dst_ip': dst_ip,
+                    'responses': []  # Lista na odpowiedzi
                 }
 
-                self.captured_data[url].append(request_data)
+                # Dodaj do przechwyconych danych
+                if url not in self.captured_data:
+                    self.captured_data[url] = []
 
-                print(f"[{timestamp}] {method} {url}")
-                if cookies:
-                    print(f"Ciasteczka: {len(cookies)} znalezione")
+                self.captured_data[url].append(request_data)
 
             # Przechwytywanie odpowiedzi HTTP
             elif packet.haslayer(HTTPResponse):
                 if packet.haslayer(scapy.Raw):
                     try:
-                        response_data = packet[scapy.Raw].load.decode(errors='ignore')
-                        print(f"Odebrano odpowiedź HTTP: {len(response_data)} bajtów")
-                    except:
-                        pass
-
-            # Analiza pakietów TCP, które mogą zawierać dane HTTP/HTTPS
-            elif packet.haslayer(scapy.TCP):
-                # Jeśli mamy dane na porcie 80 lub 443
-                if (packet.haslayer(scapy.Raw) and
-                        (packet[scapy.TCP].dport == 80 or packet[scapy.TCP].dport == 443 or
-                         packet[scapy.TCP].sport == 80 or packet[scapy.TCP].sport == 443)):
-
-                    try:
-                        payload = packet[scapy.Raw].load.decode(errors='ignore')
-
-                        # Szukanie ciasteczek
-                        if "Cookie:" in payload:
-                            print(f"Potencjalne ciasteczka znalezione w pakiecie TCP")
-
-                            # Próba zapisania danych
-                            src_ip = packet[scapy.IP].src
-                            dst_ip = packet[scapy.IP].dst
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                            # Używamy adresu IP jako URL, jeśli nie możemy określić dokładnego URL
-                            url = f"{dst_ip}"
-
-                            if url not in self.captured_data:
-                                self.captured_data[url] = []
-
-                            # Spróbuj wyodrębnić ciasteczka
-                            cookies = {}
+                        # Nagłówki odpowiedzi
+                        response_headers = {}
+                        for field in packet[HTTPResponse].fields:
                             try:
-                                cookie_parts = payload.split("Cookie:")[1].split("\r\n")[0].split(';')
-                                for part in cookie_parts:
-                                    if '=' in part:
-                                        key, value = part.split('=', 1)
-                                        cookies[key.strip()] = value.strip()
+                                response_headers[field] = packet[HTTPResponse].fields[field].decode(errors='ignore')
                             except:
-                                pass
+                                response_headers[field] = str(packet[HTTPResponse].fields[field])
 
-                            request_data = {
-                                'timestamp': timestamp,
-                                'method': 'UNKNOWN',
-                                'headers': {},
-                                'cookies': cookies,
-                                'post_data': payload,
-                                'protocol': 'HTTP/S'
-                            }
+                        # Treść odpowiedzi
 
-                            self.captured_data[url].append(request_data)
-                    except:
-                        pass
+                        raw_content = packet[scapy.Raw].load  # Surowe dane binarne
+
+                        # Sprawdzenie, czy odpowiedź jest skompresowana gzipem lub deflate
+                        if 'Content-Encoding' in response_headers:
+                            encoding = response_headers['Content-Encoding'].lower()
+
+                            try:
+                                if 'gzip' in encoding:
+                                    response_content = gzip.decompress(raw_content).decode('utf-8', errors='replace')
+                                    print("✅ Odpowiedź była skompresowana gzipem, została zdekompresowana.")
+                                elif 'deflate' in encoding:
+                                    response_content = zlib.decompress(raw_content).decode('utf-8', errors='replace')
+                                    print("✅ Odpowiedź była skompresowana deflate, została zdekompresowana.")
+                                else:
+                                    response_content = raw_content.decode('utf-8',
+                                                                          errors='backslashreplace')  # Domyślny fallback
+                            except Exception as e:
+                                print(f"❌ Błąd dekompresji: {e}")
+                                response_content = raw_content.decode(
+                                    errors='backslashreplace')  # Zwrot surowych danych w razie błędu
+                        else:
+                            response_content = raw_content.decode(errors='backslashreplace')  # Brak kompresji
+
+                        # Dodaj odpowiedź do ostatniego żądania
+                        for url, requests in self.captured_data.items():
+                            for request in requests:
+                                # Dodaj odpowiedź do żądania
+                                response_entry = {
+                                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    'headers': response_headers,
+                                    'content': response_content,
+                                    'content_length': len(response_content)
+                                }
+
+                                request['responses'].append(response_entry)
+                                print(f"Przechwycono odpowiedź HTTP dla {url}: {len(response_content)} bajtów")
+                                break
+
+                    except Exception as decode_err:
+                        print(f"Błąd podczas dekodowania odpowiedzi: {decode_err}")
 
         except Exception as e:
-            # Rejestruj błędy zamiast je ignorować
             print(f"Błąd podczas analizy pakietu: {e}")
             import traceback
             traceback.print_exc()
+
+    def reconstruct_page(self, url):
+        """
+        Rekonstruuje pełną stronę z przechwyconych zasobów
+
+        Args:
+            url (str): Główny adres URL strony
+
+        Returns:
+            dict: Słownik z rekonstruowaną stroną
+        """
+        if url not in self.captured_data:
+            return None
+
+        # Główny dokument HTML
+        main_html = None
+        stylesheets = []
+        scripts = []
+
+        # Sortuj żądania chronologicznie
+        requests = sorted(self.captured_data[url], key=lambda x: x.get('timestamp', ''))
+
+        for request in requests:
+            # Sprawdź odpowiedzi
+            for response in request.get('responses', []):
+                content_type = response.get('content_type', '')
+
+                # Główny dokument HTML
+                if 'text/html' in content_type and not main_html:
+                    main_html = response['content']
+
+                # Arkusze stylów
+                elif 'text/css' in content_type:
+                    stylesheets.append({
+                        'url': request['url'],
+                        'content': response['content']
+                    })
+
+                # Skrypty JavaScript
+                elif 'javascript' in content_type:
+                    scripts.append({
+                        'url': request['url'],
+                        'content': response['content']
+                    })
+
+        # Rekonstrukcja strony
+        if main_html:
+            # Wstrzyknij style do HEAD
+            style_tags = '\n'.join([
+                f'<link rel="stylesheet" href="{s["url"]}">'
+                for s in stylesheets
+            ])
+            main_html = main_html.replace('</head>', f'{style_tags}</head>')
+
+            # Dołącz skrypty na końcu body
+            script_tags = '\n'.join([
+                f'<script src="{s["url"]}"></script>'
+                for s in scripts
+            ])
+            main_html = main_html.replace('</body>', f'{script_tags}</body>')
+
+        return {
+            'html': main_html,
+            'stylesheets': stylesheets,
+            'scripts': scripts
+        }
+
+    def _sanitize_data(self, data):
+        """Oczyszczanie danych z potencjalnie niebezpiecznych znaków"""
+        import re
+        if isinstance(data, str):
+            # Usuń znaki sterujące i niepożądane sekwencje
+            return re.sub(r'[\x00-\x1F\x7F]', '', data)
+        return data
 
     def get_gateway_ip(self):
         """Pobiera adres IP bramy sieciowej"""
@@ -642,13 +689,13 @@ class NetworkSniffer:
             self.sniffing_thread.daemon = True
             self.sniffing_thread.start()
 
-            print("Wpisz 'stop' i naciśnij Enter, aby zatrzymać przechwytywanie.")
+            print("Wpisz 'st' i naciśnij Enter, aby zatrzymać przechwytywanie.")
 
             # Oczekiwanie na polecenie zatrzymania
             try:
                 while True:
-                    command = input("Wpisz 'stop' aby zatrzymać przechwytywanie: ")
-                    if command.lower().strip() == 'stop':
+                    command = input("Wpisz 'st' aby zatrzymać przechwytywanie: ")
+                    if command.lower().strip() == 'st':
                         break
                     time.sleep(0.5)
             finally:
@@ -725,6 +772,13 @@ class NetworkSniffer:
             # Utwórz prosty serwer HTTP
             class SessionHandler(http.server.SimpleHTTPRequestHandler):
                 def do_GET(self):
+                    # Obsługa favicon.ico
+                    if self.path == '/favicon.ico':
+                        # Zwróć pustą ikonę lub zignoruj żądanie
+                        self.send_response(204)  # No Content
+                        self.end_headers()
+                        return None
+
                     if self.path == '/':
                         self.path = '/session_browser.html'
                     elif self.path == '/data':
@@ -746,221 +800,317 @@ class NetworkSniffer:
         <meta charset="UTF-8">
         <title>Przeglądarka sesji</title>
         <style>
-            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-            h1 { color: #333; }
-            .url-list { width: 30%; float: left; overflow-y: auto; height: 600px; }
-            .url-details { width: 65%; float: right; border-left: 1px solid #ccc; padding-left: 20px; height: 600px; overflow-y: auto; }
-            .url-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #eee; }
-            .url-item:hover { background-color: #f5f5f5; }
-            .selected { background-color: #e0e0e0; }
-            .request-details { margin-top: 20px; border: 1px solid #ddd; padding: 10px; border-radius: 5px; }
-            .cookie-table { width: 100%; border-collapse: collapse; }
-            .cookie-table th, .cookie-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            .cookie-table th { background-color: #f2f2f2; }
-            .headers-table { width: 100%; border-collapse: collapse; }
-            .headers-table th, .headers-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            .headers-table th { background-color: #f2f2f2; }
-            .replay-btn { background-color: #4CAF50; color: white; padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; }
-            .replay-btn:hover { background-color: #45a049; }
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 0; 
+                padding: 20px; 
+                background-color: #f4f4f4;
+            }
+            .container {
+                display: flex;
+                max-width: 1600px;
+                margin: 0 auto;
+                gap: 20px;
+            }
+            .url-list {
+                width: 300px;
+                background-color: white;
+                border-radius: 5px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                max-height: 800px;
+                overflow-y: auto;
+                padding: 10px;
+            }
+            .url-item {
+                padding: 10px;
+                border-bottom: 1px solid #eee;
+                cursor: pointer;
+                transition: background-color 0.3s;
+            }
+            .url-item:hover, .url-item.selected {
+                background-color: #f0f0f0;
+            }
+            .details-panel {
+                flex-grow: 1;
+                background-color: white;
+                border-radius: 5px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                padding: 20px;
+                max-height: 800px;
+                overflow-y: auto;
+            }
+            .request-details {
+                margin-bottom: 20px;
+                border: 1px solid #ddd;
+                padding: 15px;
+                border-radius: 5px;
+            }
+            .method-badge {
+                display: inline-block;
+                padding: 5px 10px;
+                border-radius: 3px;
+                font-weight: bold;
+                margin-right: 10px;
+            }
+            .method-GET { background-color: #4CAF50; color: white; }
+            .method-POST { background-color: #2196F3; color: white; }
+            .method-OTHER { background-color: #FF9800; color: white; }
+            pre {
+                background-color: #f4f4f4;
+                padding: 10px;
+                border-radius: 5px;
+                max-height: 500px;
+                overflow-y: auto;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+            .content-buttons {
+                margin-bottom: 10px;
+                display: flex;
+                gap: 10px;
+            }
+            .content-buttons button {
+                padding: 5px 10px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                cursor: pointer;
+            }
+            .content-buttons button:nth-child(2) {
+                background-color: #2196F3;
+            }
+            .content-buttons button:nth-child(3) {
+                background-color: #FF5722;
+            }
+            .content-container {
+                position: relative;
+            }
+            .content-container iframe {
+                width: 100%;
+                height: 600px;
+                border: 1px solid #ddd;
+            }
+            .full-page-btn {
+                margin-top: 10px;
+                padding: 10px;
+                background-color: #FF5722;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+            }
         </style>
     </head>
     <body>
-        <h1>Przeglądarka sesji</h1>
-
-        <div class="url-list" id="urlList">
-            <h2>Zarejestrowane URL</h2>
-            <div id="urls"></div>
-        </div>
-
-        <div class="url-details" id="urlDetails">
-            <h2>Szczegóły żądania</h2>
-            <div id="details">Wybierz URL z listy po lewej stronie</div>
+        <div class="container">
+            <div class="url-list" id="urlList"></div>
+            <div class="details-panel" id="detailsPanel">
+                <h2>Wybierz połączenie, aby zobaczyć szczegóły</h2>
+            </div>
         </div>
 
         <script>
-            // Pobierz dane
             fetch('/data')
                 .then(response => response.json())
-                .then(data => {
-                    const urlsContainer = document.getElementById('urls');
-                    const detailsContainer = document.getElementById('details');
+                .then(sessionData => {
+                    const urlList = document.getElementById('urlList');
+                    const detailsPanel = document.getElementById('detailsPanel');
 
-                    // Wyświetl listę URL
-                    Object.keys(data).forEach(url => {
-                        const div = document.createElement('div');
-                        div.className = 'url-item';
-                        div.textContent = url;
-                        div.onclick = () => {
-                            // Usuń poprzednie zaznaczenie
-                            document.querySelectorAll('.url-item').forEach(el => el.classList.remove('selected'));
-                            div.classList.add('selected');
+                    // Generowanie listy URL
+                    Object.keys(sessionData).forEach(url => {
+                        const urlItem = document.createElement('div');
+                        urlItem.className = 'url-item';
+                        urlItem.textContent = url;
+                        urlItem.onclick = () => {
+                            // Zaznacz aktywny URL
+                            document.querySelectorAll('.url-item').forEach(el => 
+                                el.classList.remove('selected')
+                            );
+                            urlItem.classList.add('selected');
 
-                            // Wyświetl szczegóły żądań
-                            const requests = data[url];
-                            let detailsHtml = `<h3>URL: ${url}</h3>`;
+                            // Wyświetl szczegóły
+                            renderUrlDetails(url, sessionData[url]);
+                        };
+                        urlList.appendChild(urlItem);
+                    });
 
-                            requests.forEach((req, index) => {
-                                detailsHtml += `
-                                <div class="request-details">
-                                    <h4>Żądanie #${index + 1} (${req.timestamp})</h4>
-                                    <p><strong>Metoda:</strong> ${req.method}</p>
+                    function renderUrlDetails(url, requests) {
+                        detailsPanel.innerHTML = `<h2>${url}</h2>`;
 
-                                    <h5>Nagłówki:</h5>
-                                    <table class="headers-table">
-                                        <tr>
-                                            <th>Nagłówek</th>
-                                            <th>Wartość</th>
-                                        </tr>
-                                `;
+                        // Dodaj przycisk pełnej strony
+                        const fullPageAllBtn = document.createElement('button');
+                        fullPageAllBtn.textContent = 'Pełna strona (wszystkie dane)';
+                        fullPageAllBtn.className = 'full-page-btn';
+                        fullPageAllBtn.onclick = () => {
+                            const fullPageIframe = document.createElement('iframe');
+                            fullPageIframe.style.width = '100%';
+                            fullPageIframe.style.height = '800px';
+                            fullPageIframe.style.border = '1px solid #ddd';
 
-                                for (const [header, value] of Object.entries(req.headers || {})) {
-                                    detailsHtml += `
-                                        <tr>
-                                            <td>${header}</td>
-                                            <td>${value}</td>
-                                        </tr>
-                                    `;
-                                }
+                            // Zbierz wszystkie treści HTML
+                            let fullContent = requests.reduce((acc, req) => {
+                                const htmlResponses = req.responses.filter(resp => 
+                                    resp.content && 
+                                    (resp.content.includes('<!DOCTYPE html>') || 
+                                     resp.content.includes('<html'))
+                                );
+                                return acc + (htmlResponses[0]?.content || '');
+                            }, '');
 
-                                detailsHtml += `</table>`;
+                            fullPageIframe.srcdoc = fullContent || '<html><body>Brak treści</body></html>';
 
-                                if (req.cookies && Object.keys(req.cookies).length > 0) {
-                                    detailsHtml += `
-                                    <h5>Ciasteczka:</h5>
-                                    <table class="cookie-table">
-                                        <tr>
-                                            <th>Nazwa</th>
-                                            <th>Wartość</th>
-                                        </tr>
-                                    `;
+                            const fullPageContainer = document.createElement('div');
+                            fullPageContainer.style.marginTop = '15px';
+                            fullPageContainer.appendChild(fullPageIframe);
 
-                                    for (const [name, value] of Object.entries(req.cookies)) {
-                                        detailsHtml += `
-                                            <tr>
-                                                <td>${name}</td>
-                                                <td>${value}</td>
-                                            </tr>
-                                        `;
-                                    }
-
-                                    detailsHtml += `</table>`;
-                                }
-
-                                if (req.post_data) {
-                                    detailsHtml += `
-                                    <h5>Dane POST:</h5>
-                                    <pre>${req.post_data}</pre>
-                                    `;
-                                }
-
-                                if (req.protocol) {
-                                    detailsHtml += `<p><strong>Protokół:</strong> ${req.protocol}</p>`;
-                                }
-
-                                if (req.sport && req.dport) {
-                                    detailsHtml += `<p><strong>Porty:</strong> ${req.sport} → ${req.dport}</p>`;
-                                }
-
-                                detailsHtml += `
-                                    <button class="replay-btn" onclick="replayRequest('${url}', ${index})">Odtwórz żądanie</button>
-                                </div>
-                                `;
-                            });
-
-                            detailsContainer.innerHTML = detailsHtml;
+                            detailsPanel.appendChild(fullPageContainer);
                         };
 
-                        urlsContainer.appendChild(div);
-                    });
+                        detailsPanel.appendChild(fullPageAllBtn);
+
+                        requests.forEach((request, index) => {
+                            const requestBlock = document.createElement('div');
+                            requestBlock.className = 'request-details';
+
+                            // Badge metody
+                            const methodBadge = document.createElement('span');
+                            methodBadge.className = `method-badge method-${request.method || 'OTHER'}`;
+                            methodBadge.textContent = request.method || 'UNKNOWN';
+                            requestBlock.appendChild(methodBadge);
+
+                            // Nagłówek
+                            const headerInfo = document.createElement('div');
+                            headerInfo.innerHTML = `
+                                <p><strong>Timestamp:</strong> ${request.timestamp}</p>
+                                <p><strong>Źródło:</strong> ${request.src_ip} → <strong>Cel:</strong> ${request.dst_ip}</p>
+                            `;
+                            requestBlock.appendChild(headerInfo);
+
+                            // Nagłówki żądania
+                            if (request.headers && Object.keys(request.headers).length > 0) {
+                                const headersTitle = document.createElement('div');
+                                headersTitle.textContent = 'Nagłówki żądania';
+                                headersTitle.style.fontWeight = 'bold';
+                                headersTitle.style.marginTop = '10px';
+                                requestBlock.appendChild(headersTitle);
+
+                                const headersPre = document.createElement('pre');
+                                headersPre.textContent = JSON.stringify(request.headers, null, 2);
+                                requestBlock.appendChild(headersPre);
+                            }
+
+                            // Dane POST
+                            if (request.post_data) {
+                                const postTitle = document.createElement('div');
+                                postTitle.textContent = 'Dane POST';
+                                postTitle.style.fontWeight = 'bold';
+                                postTitle.style.marginTop = '10px';
+                                requestBlock.appendChild(postTitle);
+
+                                const postPre = document.createElement('pre');
+                                postPre.textContent = request.post_data;
+                                requestBlock.appendChild(postPre);
+                            }
+
+                            // Odpowiedzi
+                            if (request.responses && request.responses.length > 0) {
+                                request.responses.forEach((response, respIndex) => {
+                                    const responsesTitle = document.createElement('div');
+                                    responsesTitle.textContent = `Odpowiedź #${respIndex + 1}`;
+                                    responsesTitle.style.fontWeight = 'bold';
+                                    responsesTitle.style.marginTop = '10px';
+                                    requestBlock.appendChild(responsesTitle);
+
+                                    // Nagłówki odpowiedzi
+                                    if (response.headers && Object.keys(response.headers).length > 0) {
+                                        const responseHeadersTitle = document.createElement('div');
+                                        responseHeadersTitle.textContent = 'Nagłówki odpowiedzi';
+                                        responseHeadersTitle.style.fontWeight = 'bold';
+                                        requestBlock.appendChild(responseHeadersTitle);
+
+                                        const responseHeadersPre = document.createElement('pre');
+                                        responseHeadersPre.textContent = JSON.stringify(response.headers, null, 2);
+                                        requestBlock.appendChild(responseHeadersPre);
+                                    }
+
+                                    // Treść odpowiedzi
+                                    if (response.content) {
+                                        const contentTitle = document.createElement('div');
+                                        contentTitle.textContent = 'Treść odpowiedzi';
+                                        contentTitle.style.fontWeight = 'bold';
+                                        requestBlock.appendChild(contentTitle);
+
+                                        // Kontener z przyciskami
+                                        const buttonsDiv = document.createElement('div');
+                                        buttonsDiv.className = 'content-buttons';
+
+                                        // Przycisk Kod
+                                        const codeBtn = document.createElement('button');
+                                        codeBtn.textContent = 'Kod';
+
+                                        // Przycisk Podgląd
+                                        const previewBtn = document.createElement('button');
+                                        previewBtn.textContent = 'Podgląd';
+
+                                        // Przycisk Pełna strona
+                                        const fullPageBtn = document.createElement('button');
+                                        fullPageBtn.textContent = 'Pełna strona';
+
+                                        // Kontener na treść
+                                        const contentDiv = document.createElement('div');
+                                        contentDiv.className = 'content-container';
+
+                                        // Domyślnie pokaż kod
+                                        const contentPre = document.createElement('pre');
+                                        contentPre.textContent = response.content;
+                                        contentDiv.appendChild(contentPre);
+
+                                        // Obsługa przycisku Kod
+                                        codeBtn.onclick = () => {
+                                            contentDiv.innerHTML = '';
+                                            contentDiv.appendChild(contentPre);
+                                        };
+
+                                        // Obsługa przycisku Podgląd
+                                        previewBtn.onclick = () => {
+                                            contentDiv.innerHTML = '';
+                                            const iframe = document.createElement('iframe');
+                                            iframe.srcdoc = response.content;
+                                            iframe.style.width = '100%';
+                                            iframe.style.height = '600px';
+                                            contentDiv.appendChild(iframe);
+                                        };
+
+                                        // Obsługa przycisku Pełna strona
+                                        fullPageBtn.onclick = () => {
+                                            contentDiv.innerHTML = '';
+                                            const iframe = document.createElement('iframe');
+                                            iframe.srcdoc = response.content;
+                                            iframe.style.width = '100%';
+                                            iframe.style.height = '800px';
+                                            contentDiv.appendChild(iframe);
+                                        };
+
+                                        // Dodaj przyciski
+                                        buttonsDiv.appendChild(codeBtn);
+                                        buttonsDiv.appendChild(previewBtn);
+                                        buttonsDiv.appendChild(fullPageBtn);
+                                        requestBlock.appendChild(buttonsDiv);
+                                        requestBlock.appendChild(contentDiv);
+                                    }
+                                });
+                            }
+
+                            detailsPanel.appendChild(requestBlock);
+                        });
+                    }
                 })
                 .catch(error => {
-                    console.error('Błąd podczas pobierania danych:', error);
-                    document.getElementById('details').innerHTML = `<p>Błąd podczas pobierania danych: ${error.message}</p>`;
+                    console.error('Błąd podczas ładowania danych:', error);
+                    document.getElementById('detailsPanel').innerHTML = 
+                        `<p>Nie udało się załadować danych: ${error.message}</p>`;
                 });
-
-            // Funkcja do odtwarzania żądania
-            function replayRequest(url, index) {
-                fetch('/data')
-                    .then(response => response.json())
-                    .then(data => {
-                        const request = data[url][index];
-
-                        // Utwórz iframe aby symulować przeglądarkę
-                        const iframe = document.createElement('iframe');
-                        iframe.style.width = '100%';
-                        iframe.style.height = '400px';
-                        iframe.style.border = '1px solid #ccc';
-
-                        // Dodaj iframe do strony
-                        const detailsDiv = document.querySelector(`#details .request-details:nth-child(${index + 2})`);
-                        detailsDiv.appendChild(iframe);
-
-                        // Dla HTTPS połączeń zwracamy informację, że odtwarzanie nie jest możliwe
-                        if (url.startsWith('https://') || request.protocol === 'HTTPS') {
-                            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                            iframeDoc.body.innerHTML = `
-                                <h3>Nie można odtworzyć żądania HTTPS</h3>
-                                <p>Żądania HTTPS są szyfrowane i nie mogą być odtworzone bezpośrednio.</p>
-                                <p>Możesz ręcznie odwiedzić adres: <a href="${url}" target="_blank">${url}</a></p>
-                            `;
-                            return;
-                        }
-
-                        // Utwórz formularz do wysłania żądania
-                        const form = document.createElement('form');
-                        form.method = request.method || 'GET';
-
-                        // Utwórz prawidłowy URL bez protokołu
-                        let formUrl = url;
-                        if (formUrl.startsWith('http://')) {
-                            formUrl = formUrl.substring(7);
-                        }
-                        form.action = `http://${formUrl}`;
-                        form.target = iframe.name = `iframe_${Date.now()}`;
-
-                        // Dodaj ciasteczka
-                        if (request.cookies && Object.keys(request.cookies).length > 0) {
-                            const cookieScript = document.createElement('script');
-                            let cookieCode = '';
-                            for (const [name, value] of Object.entries(request.cookies)) {
-                                cookieCode += `document.cookie = "${name}=${value}; path=/;";`;
-                            }
-                            cookieScript.textContent = cookieCode;
-                            form.appendChild(cookieScript);
-                        }
-
-                        // Dodaj dane POST jeśli istnieją
-                        if (request.post_data) {
-                            try {
-                                const dataParams = new URLSearchParams(request.post_data);
-                                dataParams.forEach((value, key) => {
-                                    const input = document.createElement('input');
-                                    input.type = 'hidden';
-                                    input.name = key;
-                                    input.value = value;
-                                    form.appendChild(input);
-                                });
-                            } catch (error) {
-                                console.error('Błąd podczas przetwarzania danych POST:', error);
-                                // Jeśli nie udało się sparsować danych POST, dodajemy je jako jeden parametr
-                                const input = document.createElement('input');
-                                input.type = 'hidden';
-                                input.name = 'data';
-                                input.value = request.post_data;
-                                form.appendChild(input);
-                            }
-                        }
-
-                        // Dodaj formularz do strony i wyślij
-                        document.body.appendChild(form);
-                        form.submit();
-                        document.body.removeChild(form);
-                    })
-                    .catch(error => {
-                        console.error('Błąd podczas odtwarzania żądania:', error);
-                        alert(`Błąd podczas odtwarzania żądania: ${error.message}`);
-                    });
-            }
         </script>
     </body>
     </html>
@@ -999,6 +1149,8 @@ class NetworkSniffer:
                         except Exception as e:
                             print(f"Nie udało się usunąć pliku {temp_file}: {e}")
                     print("Serwer zatrzymany.")
+
+            return True
 
         except Exception as e:
             print(f"Błąd podczas uruchamiania przeglądarki sesji: {e}")
@@ -1260,57 +1412,130 @@ class NetworkSniffer:
 
         // Funkcja do odtwarzania żądania
         function replayRequest(url, index) {
-            fetch('/data')
-                .then(response => response.json())
-                .then(data => {
-                    const request = data[url][index];
+    fetch('/data')
+        .then(response => response.json())
+        .then(data => {
+            const request = data[url][index];
 
-                    // Utwórz iframe aby symulować przeglądarkę
-                    const iframe = document.createElement('iframe');
-                    iframe.style.width = '100%';
-                    iframe.style.height = '400px';
-                    iframe.style.border = '1px solid #ccc';
+            // Utwórz iframe aby symulować przeglądarkę
+            const iframe = document.createElement('iframe');
+            iframe.style.width = '100%';
+            iframe.style.height = '600px';
+            iframe.style.border = '1px solid #ccc';
 
-                    // Dodaj iframe do strony
-                    const detailsDiv = document.querySelector(`#details .request-details:nth-child(${index + 2})`);
-                    detailsDiv.appendChild(iframe);
+            // Dodaj iframe do strony
+            const detailsDiv = document.querySelector(`#details .request-details:nth-child(${index + 2})`);
+            detailsDiv.appendChild(iframe);
 
-                    // Utwórz formularz do wysłania żądania
-                    const form = document.createElement('form');
-                    form.method = request.method;
-                    form.action = `http://${url}`;
-                    form.target = iframe.name = `iframe_${Date.now()}`;
+            // Przygotuj pełny adres URL
+            const fullUrl = url.startsWith('http') ? url : `http://${url}`;
 
-                    // Dodaj ciasteczka
-                    const cookieScript = document.createElement('script');
+            // Przygotuj zawartość dokumentu HTML w iframe
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            
+            // Funkcja do wysyłania żądania
+            function sendRequest() {
+                // Utwórz formularz do wysłania żądania
+                const form = iframeDoc.createElement('form');
+                form.method = request.method || 'GET';
+                form.action = fullUrl;
+                form.target = '_self';
+                form.enctype = 'application/x-www-form-urlencoded';
+
+                // Dodaj ciasteczka
+                if (request.cookies && Object.keys(request.cookies).length > 0) {
+                    const cookieScript = iframeDoc.createElement('script');
                     let cookieCode = '';
                     for (const [name, value] of Object.entries(request.cookies)) {
-                        cookieCode += `document.cookie = "${name}=${value}; path=/;";`;
+                        cookieCode += `document.cookie = "${name}=${value}; path=/; domain=${new URL(fullUrl).hostname}";`;
                     }
                     cookieScript.textContent = cookieCode;
-                    form.appendChild(cookieScript);
+                    iframeDoc.head.appendChild(cookieScript);
+                }
 
-                    // Dodaj dane POST jeśli istnieją
-                    if (request.post_data) {
+                // Dodaj dane POST jeśli istnieją
+                if (request.method === 'POST' && request.post_data) {
+                    try {
                         const dataParams = new URLSearchParams(request.post_data);
                         dataParams.forEach((value, key) => {
-                            const input = document.createElement('input');
+                            const input = iframeDoc.createElement('input');
                             input.type = 'hidden';
                             input.name = key;
                             input.value = value;
                             form.appendChild(input);
                         });
+                    } catch (error) {
+                        console.error('Błąd podczas przetwarzania danych POST:', error);
+                        // Dodaj surowe dane POST jako jeden parametr
+                        const input = iframeDoc.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'rawPostData';
+                        input.value = request.post_data;
+                        form.appendChild(input);
                     }
+                }
 
-                    // Dodaj formularz do strony i wyślij
-                    document.body.appendChild(form);
-                    form.submit();
-                    document.body.removeChild(form);
-                })
-                .catch(error => {
-                    console.error('Błąd podczas odtwarzania żądania:', error);
-                    alert(`Błąd podczas odtwarzania żądania: ${error.message}`);
-                });
+                // Dodaj nagłówki niestandardowe jako meta tagi
+                if (request.headers) {
+                    for (const [header, value] of Object.entries(request.headers)) {
+                        const metaTag = iframeDoc.createElement('meta');
+                        metaTag.name = `x-custom-header-${header.toLowerCase()}`;
+                        metaTag.content = value;
+                        iframeDoc.head.appendChild(metaTag);
+                    }
+                }
+
+                // Otwórz dokument do zapisu
+                iframeDoc.open();
+                
+                // Wygeneruj podstawowy dokument HTML
+                const htmlContent = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Odtwarzanie żądania</title>
+                    <meta charset="UTF-8">
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        .request-info { 
+                            background-color: #f4f4f4; 
+                            padding: 10px; 
+                            margin-bottom: 20px; 
+                            border: 1px solid #ddd; 
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="request-info">
+                        <h2>Odtwarzanie żądania</h2>
+                        <p><strong>URL:</strong> ${fullUrl}</p>
+                        <p><strong>Metoda:</strong> ${request.method || 'GET'}</p>
+                        <p><strong>Timestamp:</strong> ${request.timestamp}</p>
+                    </div>
+                    
+                    <!-- Formularz do automatycznego wysłania -->
+                    ${form.outerHTML}
+
+                    <script>
+                        // Automatyczne wysłanie formularza
+                        document.forms[0].submit();
+                    </script>
+                </body>
+                </html>
+                `;
+
+                // Wpisz zawartość i zamknij dokument
+                iframeDoc.write(htmlContent);
+                iframeDoc.close();
+            }
+
+            // Wywołaj funkcję wysłania żądania
+            sendRequest();
+        })
+        .catch(error => {
+            console.error('Błąd podczas odtwarzania żądania:', error);
+            alert(`Błąd podczas odtwarzania żądania: ${error.message}`);
+        });
         }
     </script>
 </body>
